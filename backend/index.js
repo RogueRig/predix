@@ -35,12 +35,15 @@ const jwks = jwksClient({
    JWKS Key Resolver
 ================================ */
 function getKey(header, callback) {
+  console.log("🔑 JWT header received:", header);
+
   jwks.getSigningKey(header.kid, (err, key) => {
     if (err) {
       console.error("❌ JWKS error:", err.message);
       return callback(err);
     }
-    callback(null, key.getPublicKey());
+    const publicKey = key.getPublicKey();
+    callback(null, publicKey);
   });
 }
 
@@ -63,10 +66,17 @@ app.post("/auth/privy", (req, res) => {
     }
 
     if (!token) {
+      console.error("❌ No token received");
       return res.status(401).json({
         error: "Missing Privy access token",
       });
     }
+
+    console.log("📥 Token received, length:", token.length);
+
+    // Decode WITHOUT verification (debug only)
+    const decodedUnsafe = jwt.decode(token, { complete: true });
+    console.log("🔍 Decoded token (unverified):", decodedUnsafe);
 
     jwt.verify(
       token,
@@ -77,23 +87,24 @@ app.post("/auth/privy", (req, res) => {
       },
       (err, decoded) => {
         if (err) {
-          console.error("❌ Privy JWT verification failed:", err.message);
+          console.error("❌ Privy JWT verification failed");
+          console.error("Reason:", err.message);
           return res.status(401).json({ error: "Invalid Privy token" });
         }
 
-        // 🔎 Optional debug (safe)
-        console.log("✅ Privy token verified:", {
+        console.log("✅ Privy token VERIFIED:", {
           sub: decoded.sub,
           iss: decoded.iss,
+          aud: decoded.aud,
         });
 
-        // ✅ VERIFIED TOKEN
         return res.json({
           ok: true,
           userId: decoded.sub,
           email: decoded.email ?? null,
           wallet: decoded.wallet_address ?? null,
           issuer: decoded.iss,
+          audience: decoded.aud,
         });
       }
     );
