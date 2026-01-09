@@ -42,7 +42,7 @@ function Home() {
       <div className="health-status">
         <h2>Backend Health Status</h2>
         
-        {loading && <p>Loading...</p>}
+        {loading && <p className="loading" role="status" aria-live="polite">Loading...</p>}
         
         {error && (
           <div className="error">
