@@ -7,13 +7,13 @@ import './styles.css'
 const privyAppId = import.meta.env.VITE_PRIVY_APP_ID
 
 if (!privyAppId) {
-  console.error('VITE_PRIVY_APP_ID is not set. Please add it to your .env file.')
+  throw new Error('VITE_PRIVY_APP_ID is not set. Please add it to your .env file.')
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <PrivyProvider
-      appId={privyAppId || ''}
+      appId={privyAppId}
       config={{
         loginMethods: ['email', 'wallet'],
         appearance: {

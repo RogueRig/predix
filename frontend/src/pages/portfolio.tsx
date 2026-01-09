@@ -41,8 +41,8 @@ export default function Portfolio() {
         <h2>User Information</h2>
         <div style={{ marginTop: '1rem' }}>
           <p><strong>User ID:</strong> {user?.id || 'N/A'}</p>
-          {user?.email && <p><strong>Email:</strong> {user.email.address}</p>}
-          {user?.wallet && <p><strong>Wallet:</strong> {user.wallet.address}</p>}
+          {user?.email && <p><strong>Email:</strong> {user.email?.address}</p>}
+          {user?.wallet && <p><strong>Wallet:</strong> {user.wallet?.address}</p>}
           <p><strong>Created At:</strong> {user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}</p>
         </div>
       </div>
