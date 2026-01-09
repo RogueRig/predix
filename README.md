@@ -41,7 +41,7 @@ Vercel is perfect for deploying React applications. Follow these steps:
 #### Step 2: Deploy to Vercel
 1. Go to [vercel.com](https://vercel.com) and sign up or log in
 2. Click **"New Project"**
-3. Import your GitHub repository (`RogueRig/predix`)
+3. Import your GitHub repository (e.g., `your-username/predix`)
 4. Configure the project settings:
    - **Framework Preset**: Vite
    - **Root Directory**: `frontend`
@@ -72,7 +72,7 @@ Render makes it easy to deploy Node.js applications. Follow these steps:
 #### Step 2: Deploy to Render
 1. Go to [render.com](https://render.com) and sign up or log in
 2. Click **"New"** → **"Web Service"**
-3. Connect your GitHub repository (`RogueRig/predix`)
+3. Connect your GitHub repository (e.g., `your-username/predix`)
 4. Configure the service:
    - **Name**: `predix-backend` (or your preferred name)
    - **Root Directory**: `backend`
