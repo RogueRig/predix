@@ -163,22 +163,38 @@ async function fetchData() {
   const response = await fetch(`${import.meta.env.VITE_API_URL}/api/data`);
   const data = await response.json();
   return data;
+  try {
+    const response = await fetch(`${import.meta.env.VITE_API_URL}/api/data`);
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Failed to fetch data:', error);
+    throw error;
+  }
 }
 
-// Define the expected shape of data sent to the backend
-type Item = Record<string, unknown>;
-
 // Example: Sending data to the backend
-async function createItem(item: Item) {
-  const response = await fetch(`${import.meta.env.VITE_API_URL}/api/items`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(item),
-  });
-  const result = await response.json();
-  return result;
+async function createItem(item: unknown) {
+  try {
+    const response = await fetch(`${import.meta.env.VITE_API_URL}/api/items`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(item),
+    });
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Failed to create item:', error);
+    throw error;
+  }
 }
 ```
 
