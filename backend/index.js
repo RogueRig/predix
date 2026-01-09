@@ -1,23 +1,23 @@
 import express from 'express';
-import { checkConnection } from './db.js';
+import { checkDb } from './db.js';
 
 const app = express();
-const PORT = Number.parseInt(process.env.PORT ?? '', 10) || 3000;
+const PORT = process.env.PORT || 10000;
 
 app.use(express.json());
 
-app.get('/api/db-check', async (req, res) => {
-  try {
-    await checkConnection();
-    res.json({ db: 'connected' });
-  } catch (error) {
-    console.error('Database connection check failed:', error);
-    res.status(500).json({ 
-      error: 'Database connection failed'
-    });
-  }
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+async function start() {
+  await checkDb(); // 🔑 wait for DB
+  app.listen(PORT, () => {
+    console.log(`🚀 Predix backend running on port ${PORT}`);
+  });
+}
+
+start().catch((err) => {
+  console.error('❌ Failed to start server:', err);
+  process.exit(1);
 });
