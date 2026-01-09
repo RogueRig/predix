@@ -221,7 +221,7 @@ const cors = require('cors');
 
 app.use(cors({
   origin: process.env.CORS_ORIGIN, // Your frontend URL
-  credentials: true,
+  credentials: true, // Allow cookies/auth headers; frontend must use credentials: 'include' in fetch when needed
 }));
 ```
 
