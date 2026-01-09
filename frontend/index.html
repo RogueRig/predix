@@ -7,7 +7,14 @@
     <title>Predix</title>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+  <h1 style="padding:16px">📱 HTML Loaded</h1>
+  <div id="root"></div>
+  <script>
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      "<p style='padding:16px'>📱 Inline JS executed</p>"
+    );
+  </script>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
 </html>
