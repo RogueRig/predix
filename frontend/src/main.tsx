@@ -1,5 +1,14 @@
-document.body.innerHTML = `
-  <div style="padding:24px;font-size:20px">
-    🔥 JavaScript Loaded Successfully
-  </div>
-`;
+import React from "react";
+import { createRoot } from "react-dom/client";
+
+const rootEl = document.getElementById("root");
+
+if (!rootEl) {
+  document.body.innerHTML = "❌ Root element not found";
+} else {
+  createRoot(rootEl).render(
+    <div style={{ padding: 24, fontSize: 20 }}>
+      ✅ React mounted successfully
+    </div>
+  );
+}
