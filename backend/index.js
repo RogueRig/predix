@@ -1,32 +1,48 @@
 import express from "express";
 import cors from "cors";
+import { PrivyClient } from "@privy-io/server-auth";
 
 const app = express();
+const PORT = process.env.PORT || 10000;
 
+/* 🔐 Privy client */
+const privy = new PrivyClient(
+  process.env.PRIVY_APP_ID,
+  process.env.PRIVY_APP_SECRET
+);
+
+/* ✅ REQUIRED middleware */
 app.use(cors());
 app.use(express.json());
 
+/* 🔎 Health check */
+app.get("/", (_req, res) => {
+  res.json({ ok: true, service: "predix-backend" });
+});
+
+/* 🔐 PRIVY AUTH VERIFY */
 app.post("/auth/privy", async (req, res) => {
   try {
     const { user } = req.body;
 
-    if (!user || !user.id) {
-      return res.status(400).json({ error: "Invalid Privy user" });
+    if (!user?.id) {
+      return res.status(400).json({ error: "Missing user object" });
     }
 
-    // 🔐 Later we will verify signature / JWT
-    console.log("✅ Privy user received:", user.id);
+    // Verify user with Privy
+    const verifiedUser = await privy.getUser(user.id);
 
-    res.json({
+    return res.json({
       ok: true,
-      userId: user.id,
+      userId: verifiedUser.id,
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Auth failed" });
+    console.error("❌ Privy auth error:", err);
+    res.status(401).json({ error: "Privy verification failed" });
   }
 });
 
-app.listen(process.env.PORT || 10000, () => {
-  console.log("🚀 Predix backend running");
+/* 🚀 Start server */
+app.listen(PORT, () => {
+  console.log(`🚀 Predix backend running on ${PORT}`);
 });
