@@ -1,14 +1,8 @@
-import { createRoot } from "react-dom/client";
+console.log("📱 main.tsx loaded");
 
-const root = document.getElementById("root");
-
-if (!root) {
-  document.body.innerHTML = "<h1>❌ Root div not found</h1>";
-} else {
-  createRoot(root).render(
-    <div style={{ padding: 20 }}>
-      <h1>✅ Predix is rendering</h1>
-      <p>If you see this, React works.</p>
-    </div>
-  );
-}
+document.body.innerHTML = `
+  <div style="padding:20px;font-family:sans-serif">
+    <h1>✅ main.tsx is running</h1>
+    <p>If you see this, Vite entry is correct.</p>
+  </div>
+`;
