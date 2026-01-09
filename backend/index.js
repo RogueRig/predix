@@ -51,13 +51,13 @@ app.post("/auth/privy", (req, res) => {
   try {
     let token = null;
 
-    // ✅ 1. Authorization header
+    // 1️⃣ Authorization header
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith("Bearer ")) {
       token = authHeader.replace("Bearer ", "");
     }
 
-    // ✅ 2. Fallback: token in body
+    // 2️⃣ Fallback: token in body
     if (!token && req.body?.token) {
       token = req.body.token;
     }
@@ -72,16 +72,20 @@ app.post("/auth/privy", (req, res) => {
       token,
       getKey,
       {
-        audience: PRIVY_APP_ID,
         issuer: "https://auth.privy.io",
         algorithms: ["RS256"],
       },
       (err, decoded) => {
         if (err) {
-          console.error("❌ Privy JWT verification failed");
-          console.error("Reason:", err.message);
+          console.error("❌ Privy JWT verification failed:", err.message);
           return res.status(401).json({ error: "Invalid Privy token" });
         }
+
+        // 🔎 Optional debug (safe)
+        console.log("✅ Privy token verified:", {
+          sub: decoded.sub,
+          iss: decoded.iss,
+        });
 
         // ✅ VERIFIED TOKEN
         return res.json({
