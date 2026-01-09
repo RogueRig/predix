@@ -194,6 +194,8 @@ app.get('/api/data', (req, res) => {
   res.json(data);
 });
 
+// Middleware to parse JSON request bodies
+app.use(express.json());
 app.post('/api/items', (req, res) => {
   // Create new item
   const newItem = req.body;
