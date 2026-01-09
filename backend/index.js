@@ -1,3 +1,4 @@
+import authRoutes from "./auth.js";
 import express from "express";
 import cors from "cors";
 import { PrivyClient } from "@privy-io/server-auth";
