@@ -50,7 +50,6 @@ npm run preview
 - **Privy Authentication**: Secure login with email and wallet support
 - **Protected Routes**: Portfolio page requires authentication
 - **User State Management**: User info stored in React state (no backend auth yet)
-- **Responsive Design**: Works on desktop and mobile
 
 ## Project Structure
 

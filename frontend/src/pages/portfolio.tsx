@@ -8,6 +8,15 @@ export default function Portfolio() {
     logout()
   }
 
+  const formatCreatedAt = (createdAt: number | Date | undefined): string => {
+    if (!createdAt) return 'N/A'
+    try {
+      return new Date(createdAt).toLocaleDateString()
+    } catch {
+      return 'Invalid date'
+    }
+  }
+
   return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
       <div style={{ 
@@ -19,14 +28,7 @@ export default function Portfolio() {
         <h1>Portfolio</h1>
         <button 
           onClick={handleLogout}
-          style={{
-            padding: '0.5rem 1rem',
-            backgroundColor: '#dc3545',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer'
-          }}
+          className="logout-button"
         >
           Logout
         </button>
@@ -41,9 +43,9 @@ export default function Portfolio() {
         <h2>User Information</h2>
         <div style={{ marginTop: '1rem' }}>
           <p><strong>User ID:</strong> {user?.id || 'N/A'}</p>
-          {user?.email && <p><strong>Email:</strong> {user.email?.address}</p>}
-          {user?.wallet && <p><strong>Wallet:</strong> {user.wallet?.address}</p>}
-          <p><strong>Created At:</strong> {user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}</p>
+          {user?.email && <p><strong>Email:</strong> {user.email.address}</p>}
+          {user?.wallet && <p><strong>Wallet:</strong> {user.wallet.address}</p>}
+          <p><strong>Created At:</strong> {formatCreatedAt(user?.createdAt)}</p>
         </div>
       </div>
 
@@ -52,6 +54,28 @@ export default function Portfolio() {
         <p>Portfolio management features coming soon...</p>
         <Link to="/" style={{ color: '#676FFF' }}>Back to Home</Link>
       </div>
+
+      <style>{`
+        .logout-button {
+          padding: 0.5rem 1rem;
+          background-color: #dc3545;
+          color: white;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: background-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .logout-button:hover {
+          background-color: #c82333;
+        }
+
+        .logout-button:focus-visible {
+          outline: 2px solid #dc3545;
+          outline-offset: 2px;
+          box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.4);
+        }
+      `}</style>
     </div>
   )
 }
