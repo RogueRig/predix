@@ -5,9 +5,15 @@ import Login from './pages/login'
 import Portfolio from './pages/portfolio'
 
 function App() {
+  const privyAppId = import.meta.env.VITE_PRIVY_APP_ID
+  
+  if (!privyAppId) {
+    throw new Error('VITE_PRIVY_APP_ID environment variable is required')
+  }
+
   return (
     <PrivyProvider
-      appId={import.meta.env.VITE_PRIVY_APP_ID || 'your-privy-app-id'}
+      appId={privyAppId}
       config={{
         appearance: {
           theme: 'light',
