@@ -1,14 +1,16 @@
-import { useState } from 'react'
+import { usePrivy } from '@privy-io/react-auth'
+import { useNavigate } from 'react-router-dom'
+import { useEffect } from 'react'
 
-function Login() {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+export default function Login() {
+  const { ready, authenticated, login } = usePrivy()
+  const navigate = useNavigate()
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    // No backend logic yet - this is just a placeholder
-    console.log('Login form submitted (no backend yet)')
-  }
+  useEffect(() => {
+    if (ready && authenticated) {
+      navigate('/portfolio')
+    }
+  }, [ready, authenticated, navigate])
 
   return (
     <div className="container">
@@ -16,38 +18,19 @@ function Login() {
         <h2>Login</h2>
         <p>Sign in to your account</p>
       </div>
-      <form className="login-form" onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label htmlFor="email">Email</label>
-          <input
-            type="email"
-            id="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="Enter your email"
-            required
-          />
-        </div>
-        <div className="form-group">
-          <label htmlFor="password">Password</label>
-          <input
-            type="password"
-            id="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter your password"
-            required
-          />
-        </div>
-        <button type="submit" className="btn">
-          Login
-        </button>
-        <p style={{ marginTop: '1rem', textAlign: 'center', color: '#95a5a6' }}>
-          Note: Backend authentication not yet implemented
-        </p>
-      </form>
+      <div className="login-form">
+        {ready && !authenticated && (
+          <>
+            <p style={{ marginBottom: '1.5rem', textAlign: 'center', color: '#7f8c8d' }}>
+              Use Privy for secure authentication
+            </p>
+            <button className="btn" onClick={login}>Login with Privy</button>
+          </>
+        )}
+        {!ready && (
+          <p style={{ textAlign: 'center', color: '#95a5a6' }}>Loading...</p>
+        )}
+      </div>
     </div>
   )
 }
-
-export default Login
