@@ -88,12 +88,14 @@ Render makes it easy to deploy Node.js applications. Follow these steps:
 
    | Variable Name | Description | Example Value |
    |--------------|-------------|---------------|
-   | `PORT` | Server port (Render provides this automatically) | `10000` |
    | `NODE_ENV` | Environment mode | `production` |
    | `DATABASE_URL` | Your database connection string | `mongodb://...` or `postgresql://...` |
    | `CORS_ORIGIN` | Frontend URL for CORS | `https://your-app.vercel.app` |
    | `JWT_SECRET` | Secret key for authentication (if using JWT) | `your-secret-key-here` |
 
+   > Note: Render automatically sets the `PORT` environment variable for your service.
+   > Your server should listen on `process.env.PORT`, and you typically do not need to
+   > configure `PORT` manually in the Render dashboard.
 3. Click **"Save Changes"**
 4. Your service will automatically redeploy
 
