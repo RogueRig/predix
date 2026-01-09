@@ -25,7 +25,8 @@ function Home() {
         setHealthData(data)
         setError(null)
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to fetch health data')
+        console.error('Failed to fetch health data:', err)
+        setError('Failed to fetch health data')
         setHealthData(null)
       } finally {
         setLoading(false)
