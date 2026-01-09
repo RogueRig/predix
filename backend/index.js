@@ -49,15 +49,24 @@ function getKey(header, callback) {
 ================================ */
 app.post("/auth/privy", (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
+    let token = null;
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({
-        error: "Missing Authorization header (Bearer token required)",
-      });
+    // ✅ 1. Authorization header
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.replace("Bearer ", "");
     }
 
-    const token = authHeader.replace("Bearer ", "");
+    // ✅ 2. Fallback: token in body
+    if (!token && req.body?.token) {
+      token = req.body.token;
+    }
+
+    if (!token) {
+      return res.status(401).json({
+        error: "Missing Privy access token",
+      });
+    }
 
     jwt.verify(
       token,
@@ -69,7 +78,8 @@ app.post("/auth/privy", (req, res) => {
       },
       (err, decoded) => {
         if (err) {
-          console.error("❌ Privy JWT verification failed:", err.message);
+          console.error("❌ Privy JWT verification failed");
+          console.error("Reason:", err.message);
           return res.status(401).json({ error: "Invalid Privy token" });
         }
 
