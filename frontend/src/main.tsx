@@ -47,7 +47,7 @@ function App() {
         onClick={async () => {
           try {
             const res = await fetch(
-              "https://YOUR-RENDER-URL.onrender.com/auth/privy",
+              "https://predix-backend.onrender.com/auth/privy",
               {
                 method: "POST",
                 headers: {
@@ -80,7 +80,7 @@ function App() {
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <PrivyProvider
-      appId="YOUR_PRIVY_APP_ID"
+      appId="cmk602oo400ebjs0cgw0vbbao"
       config={{
         appearance: {
           theme: "light",
