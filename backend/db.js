@@ -3,16 +3,19 @@ const { Pool } = require('pg');
 // Create a connection pool using DATABASE_URL from environment
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Handle connection errors safely
-  ssl: process.env.DATABASE_URL?.includes('localhost') ? false : {
-    rejectUnauthorized: false
-  }
+  // Handle SSL configuration based on environment
+  ssl: process.env.NODE_ENV === 'production' 
+    ? { rejectUnauthorized: true }
+    : process.env.DATABASE_URL?.includes('localhost') 
+    ? false 
+    : { rejectUnauthorized: true }
 });
 
-// Handle pool errors to prevent crashes
+// Handle pool errors gracefully
 pool.on('error', (err) => {
   console.error('Unexpected error on idle client', err);
-  process.exit(-1);
+  // Log the error but don't crash the application
+  // The pool will handle reconnection automatically
 });
 
 // Export a query helper function
