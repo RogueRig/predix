@@ -1,11 +1,20 @@
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+
+function Home() {
+  return <h1>🏠 Predix Home</h1>;
+}
+
+function Login() {
+  return <h1>🔐 Login</h1>;
+}
+
 export default function App() {
   return (
-    <div style={{ padding: 24 }}>
-      <h1>Predix Debug</h1>
-      <p>ENV VALUE:</p>
-      <pre>
-        {String(import.meta.env.VITE_PRIVY_APP_ID)}
-      </pre>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/login" element={<Login />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
