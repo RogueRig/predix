@@ -14,7 +14,7 @@ function Home() {
   useEffect(() => {
     const fetchHealth = async () => {
       try {
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+        const apiUrl = import.meta.env.VITE_API_URL?.trim() || 'http://localhost:3000'
         const response = await fetch(`${apiUrl}/api/health`)
         
         if (!response.ok) {
