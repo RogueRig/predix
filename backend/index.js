@@ -14,16 +14,9 @@ const privy = new PrivyClient(
 );
 
 /* ✅ REQUIRED middleware */
-app.use(cors());
 app.use(express.json());
+app.use(cors());
 app.use("/auth", authRoutes);
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type"],
-  })
-);
 
 /* 🔎 Health check */
 app.get("/", (_req, res) => {
