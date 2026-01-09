@@ -196,9 +196,16 @@ app.get('/api/data', (req, res) => {
 
 // Middleware to parse JSON request bodies
 app.use(express.json());
+// Always validate and sanitize input on the backend before using it.
 app.post('/api/items', (req, res) => {
-  // Create new item
-  const newItem = req.body;
+  const { name, price } = req.body || {};
+
+  // Basic validation example (adjust fields to match your real model)
+  if (typeof name !== 'string' || name.trim() === '' || typeof price !== 'number') {
+    return res.status(400).json({ success: false, error: 'Invalid item data.' });
+  }
+
+  const newItem = { name: name.trim(), price };
   // Save to database...
   res.json({ success: true, item: newItem });
 });
