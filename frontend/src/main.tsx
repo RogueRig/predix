@@ -1,14 +1,15 @@
-import { createRoot } from "react-dom/client";
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
 
-const rootEl = document.getElementById("root");
+const root = document.getElementById("root");
 
-if (!rootEl) {
+if (!root) {
   document.body.innerHTML = "<h1>❌ Root div not found</h1>";
 } else {
-  const root = createRoot(rootEl);
-  root.render(
-    <div style={{ padding: 20, fontSize: 18 }}>
-      ✅ Predix React Mounted Successfully
-    </div>
+  ReactDOM.createRoot(root).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
   );
 }
