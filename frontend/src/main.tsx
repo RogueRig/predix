@@ -3,31 +3,54 @@ import ReactDOM from "react-dom/client";
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 
 /* ===============================
-   🔐 Privy + Backend Test Button
+   🔐 Privy + Backend Auth Test
 ================================ */
 
 function App() {
-  const { login, authenticated, user, logout } = usePrivy();
+  const {
+    login,
+    logout,
+    authenticated,
+    ready,
+    user,
+    getAccessToken,
+  } = usePrivy();
 
   async function verifyBackendAuth() {
     try {
+      const token = await getAccessToken();
+
+      if (!token) {
+        alert("❌ No Privy access token");
+        return;
+      }
+
       const res = await fetch(
         "https://predix-backend.onrender.com/auth/privy",
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ user }),
         }
       );
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text);
+      }
 
       const data = await res.json();
       alert("✅ Backend verified:\n" + JSON.stringify(data, null, 2));
     } catch (err) {
-      alert("❌ Backend auth failed");
       console.error(err);
+      alert("❌ Backend auth failed (see console)");
     }
+  }
+
+  if (!ready) {
+    return <p>Loading Privy…</p>;
   }
 
   return (
@@ -48,6 +71,7 @@ function App() {
       {authenticated && (
         <>
           <p>✅ Logged in</p>
+
           <pre
             style={{
               background: "#111",
@@ -79,7 +103,7 @@ function App() {
 }
 
 /* ===============================
-   🚀 React Mount (DO NOT TOUCH)
+   🚀 React Mount
 ================================ */
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
