@@ -1,57 +1,96 @@
-import express from 'express'
-import cors from 'cors'
-import fetch from 'node-fetch'
+import express from "express";
+import cors from "cors";
+import jwt from "jsonwebtoken";
+import jwksClient from "jwks-rsa";
 
-const app = express()
-const PORT = process.env.PORT || 10000
+const app = express();
+const PORT = process.env.PORT || 10000;
 
-// ✅ middleware (ONLY ONCE)
-app.use(cors())
-app.use(express.json())
+/* ===============================
+   Middleware
+================================ */
 
-// ✅ health check
-app.get('/health', (_req, res) => {
-  res.json({ ok: true })
-})
+app.use(cors());
+app.use(express.json());
 
-// 🔐 PRIVY VERIFY ROUTE
-app.post('/auth/verify', async (req, res) => {
+/* ===============================
+   Privy JWT Verification Setup
+================================ */
+
+const PRIVY_APP_ID = process.env.PRIVY_APP_ID;
+
+if (!PRIVY_APP_ID) {
+  console.error("❌ PRIVY_APP_ID missing");
+  process.exit(1);
+}
+
+const jwks = jwksClient({
+  jwksUri: "https://auth.privy.io/.well-known/jwks.json",
+});
+
+function getKey(header, callback) {
+  jwks.getSigningKey(header.kid, function (err, key) {
+    if (err) return callback(err);
+    const signingKey = key.getPublicKey();
+    callback(null, signingKey);
+  });
+}
+
+/* ===============================
+   Auth Route
+================================ */
+
+app.post("/auth/privy", async (req, res) => {
   try {
-    const { token } = req.body
+    const authHeader = req.headers.authorization;
 
-    if (!token) {
-      return res.status(400).json({ error: 'Missing token' })
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing Authorization header" });
     }
 
-    // 🔑 Verify with Privy
-    const privyRes = await fetch('https://auth.privy.io/api/v1/me', {
-      headers: {
-        Authorization: `Bearer ${token}`,
+    const token = authHeader.replace("Bearer ", "");
+
+    jwt.verify(
+      token,
+      getKey,
+      {
+        audience: PRIVY_APP_ID,
+        issuer: "https://auth.privy.io",
+        algorithms: ["RS256"],
       },
-    })
+      (err, decoded) => {
+        if (err) {
+          console.error("❌ JWT verify failed:", err.message);
+          return res.status(401).json({ error: "Invalid token" });
+        }
 
-    if (!privyRes.ok) {
-      return res.status(401).json({ error: 'Invalid Privy token' })
-    }
-
-    const user = await privyRes.json()
-
-    // ✅ success
-    res.json({
-      success: true,
-      user: {
-        id: user.id,
-        wallet: user.wallet?.address ?? null,
-        email: user.email?.address ?? null,
-      },
-    })
+        // ✅ SUCCESS
+        return res.json({
+          ok: true,
+          userId: decoded.sub,
+          wallet: decoded.wallet_address || null,
+          email: decoded.email || null,
+        });
+      }
+    );
   } catch (err) {
-    console.error('❌ Auth verify failed', err)
-    res.status(500).json({ error: 'Auth verification failed' })
+    console.error("❌ Auth error:", err);
+    res.status(500).json({ error: "Server error" });
   }
-})
+});
 
-// 🚀 start server
+/* ===============================
+   Health Check
+================================ */
+
+app.get("/", (_, res) => {
+  res.send("✅ Predix backend running");
+});
+
+/* ===============================
+   Start Server
+================================ */
+
 app.listen(PORT, () => {
-  console.log(`🚀 Predix backend running on port ${PORT}`)
-})
+  console.log(`🚀 Predix backend listening on ${PORT}`);
+});
