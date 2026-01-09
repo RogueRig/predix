@@ -2,7 +2,7 @@ import express from 'express';
 import { checkConnection } from './db.js';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number.parseInt(process.env.PORT ?? '', 10) || 3000;
 
 app.use(express.json());
 
