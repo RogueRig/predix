@@ -1,7 +1,7 @@
 import { usePrivy } from "@privy-io/react-auth";
 
 export default function App() {
-  const { login, logout, authenticated, user } = usePrivy();
+  const { login, authenticated, user } = usePrivy();
 
   return (
     <div style={{ padding: 24 }}>
@@ -9,8 +9,8 @@ export default function App() {
         <button onClick={login}>Login to Predix</button>
       ) : (
         <>
-          <p>Logged in as: {user?.id}</p>
-          <button onClick={logout}>Logout</button>
+          <h1>Welcome to Predix 🎉</h1>
+          <p>User ID: {user?.id}</p>
         </>
       )}
     </div>
