@@ -16,8 +16,6 @@ function App() {
         return <Login />
       case 'portfolio':
         return <Portfolio />
-      default:
-        return <Home />
     }
   }
 
@@ -31,6 +29,7 @@ function App() {
               <button
                 className={currentPage === 'home' ? 'nav-link active' : 'nav-link'}
                 onClick={() => setCurrentPage('home')}
+                aria-current={currentPage === 'home' ? 'page' : undefined}
               >
                 Home
               </button>
@@ -39,6 +38,7 @@ function App() {
               <button
                 className={currentPage === 'portfolio' ? 'nav-link active' : 'nav-link'}
                 onClick={() => setCurrentPage('portfolio')}
+                aria-current={currentPage === 'portfolio' ? 'page' : undefined}
               >
                 Portfolio
               </button>
@@ -47,6 +47,7 @@ function App() {
               <button
                 className={currentPage === 'login' ? 'nav-link active' : 'nav-link'}
                 onClick={() => setCurrentPage('login')}
+                aria-current={currentPage === 'login' ? 'page' : undefined}
               >
                 Login
               </button>
