@@ -165,8 +165,11 @@ async function fetchData() {
   return data;
 }
 
+// Define the expected shape of data sent to the backend
+type Item = Record<string, unknown>;
+
 // Example: Sending data to the backend
-async function createItem(item) {
+async function createItem(item: Item) {
   const response = await fetch(`${import.meta.env.VITE_API_URL}/api/items`, {
     method: 'POST',
     headers: {
