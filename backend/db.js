@@ -1,60 +1,32 @@
-import pg from 'pg';
-const { Pool } = pg;
+import pkg from 'pg';
+const { Pool } = pkg;
 
-const dbPort = process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 5432;
+const {
+  DB_HOST,
+  DB_PORT,
+  DB_NAME,
+  DB_USER,
+  DB_PASSWORD,
+} = process.env;
 
-const dbUser = process.env.DB_USER;
-const dbPassword = process.env.DB_PASSWORD;
-
-if (!dbUser || !dbPassword) {
-  throw new Error('Database credentials must be set via DB_USER and DB_PASSWORD environment variables.');
+if (!DB_HOST || !DB_USER || !DB_PASSWORD || !DB_NAME) {
+  throw new Error('Database credentials are missing. Check Render env vars.');
 }
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'predix',
-  user: dbUser,
-  password: dbPassword,
+export const pool = new Pool({
+  host: DB_HOST,
+  port: DB_PORT || 5432,
+  database: DB_NAME,
+  user: DB_USER,
+  password: DB_PASSWORD,
+  ssl: {
+    rejectUnauthorized: false, // REQUIRED on Render
+  },
 });
 
-let poolEnded = false;
-
-async function shutdownPool(signal) {
-  if (poolEnded) {
-    return;
-  }
-  poolEnded = true;
-  try {
-    await pool.end();
-  } catch (err) {
-    // Optionally log the error; avoid throwing during shutdown
-    // console.error(`Error closing DB pool on ${signal}:`, err);
-  }
-}
-
-const terminationSignals = ['SIGINT', 'SIGTERM'];
-terminationSignals.forEach((signal) => {
-  process.on(signal, () => {
-    shutdownPool(signal).finally(() => {
-      // Allow default behavior after cleanup
-      process.exit(0);
-    });
-  });
-});
-
-process.on('beforeExit', () => {
-  // Ensure pool is closed when Node is about to exit naturally
-  shutdownPool('beforeExit');
-});
-export async function checkConnection() {
+export async function checkDb() {
   const client = await pool.connect();
-  try {
-    await client.query('SELECT 1');
-    return true;
-  } finally {
-    client.release();
-  }
+  await client.query('SELECT 1');
+  client.release();
+  console.log('✅ Database connected');
 }
-
-export default pool;
