@@ -1,8 +1,14 @@
-console.log("📱 main.tsx loaded");
+import { createRoot } from "react-dom/client";
 
-document.body.innerHTML = `
-  <div style="padding:20px;font-family:sans-serif">
-    <h1>✅ main.tsx is running</h1>
-    <p>If you see this, Vite entry is correct.</p>
-  </div>
-`;
+const rootEl = document.getElementById("root");
+
+if (!rootEl) {
+  document.body.innerHTML = "<h1>❌ Root div not found</h1>";
+} else {
+  const root = createRoot(rootEl);
+  root.render(
+    <div style={{ padding: 20, fontSize: 18 }}>
+      ✅ Predix React Mounted Successfully
+    </div>
+  );
+}
