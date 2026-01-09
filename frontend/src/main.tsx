@@ -1,18 +1,17 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { PrivyProvider } from "@privy-io/react-auth";
-import App from "./App";
+
+function Test() {
+  return (
+    <div style={{ padding: 24 }}>
+      <h1>Predix is alive ✅</h1>
+      <p>If you see this, React is working.</p>
+    </div>
+  );
+}
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <PrivyProvider
-      appId={import.meta.env.VITE_PRIVY_APP_ID}
-      config={{
-        loginMethods: ["email", "wallet", "farcaster"],
-        appearance: { theme: "dark" },
-      }}
-    >
-      <App />
-    </PrivyProvider>
+    <Test />
   </React.StrictMode>
 );
