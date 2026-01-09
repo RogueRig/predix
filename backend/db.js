@@ -1,11 +1,17 @@
 const { Pool } = require('pg');
 const { URL } = require('url');
 
-// Validate required environment variable
-if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL environment variable is required');
+const databaseUrl = process.env.DATABASE_URL;
+
+if (!databaseUrl) {
+  throw new Error('DATABASE_URL environment variable is not set. Please define it before starting the application.');
 }
 
+// Create a connection pool using DATABASE_URL from environment
+const pool = new Pool({
+  connectionString: databaseUrl,
+  // Handle SSL configuration: disable only for localhost connections, enable for all remote databases
+  ssl: databaseUrl.includes('localhost') || databaseUrl.includes('127.0.0.1')
 // Parse DATABASE_URL to determine if SSL is needed
 const isLocalhost = () => {
   try {
