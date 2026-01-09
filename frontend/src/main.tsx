@@ -1,150 +1,99 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import {
-  PrivyProvider,
-  usePrivy
-} from "@privy-io/react-auth";
+import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 
-/**
- * 🔹 App UI
- */
+/* ===============================
+   🔐 Privy + Backend Test Button
+================================ */
+
 function App() {
-  const { ready, authenticated, user, login, logout } = usePrivy();
+  const { login, authenticated, user, logout } = usePrivy();
 
-  if (!ready) {
-    return (
-      <div style={styles.center}>
-        <p>Loading Predix…</p>
-      </div>
-    );
-  }
+  async function verifyBackendAuth() {
+    try {
+      const res = await fetch(
+        "https://predix-backend.onrender.com/auth/privy",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ user }),
+        }
+      );
 
-  if (!authenticated) {
-    return (
-      <div style={styles.center}>
-        <h1 style={styles.title}>Predix</h1>
-        <p style={styles.text}>Prediction markets, simplified.</p>
-
-        <button style={styles.primaryButton} onClick={login}>
-          Login with Privy
-        </button>
-      </div>
-    );
+      const data = await res.json();
+      alert("✅ Backend verified:\n" + JSON.stringify(data, null, 2));
+    } catch (err) {
+      alert("❌ Backend auth failed");
+      console.error(err);
+    }
   }
 
   return (
-    <div style={styles.center}>
-      <h1 style={styles.title}>Welcome to Predix</h1>
+    <div
+      style={{
+        padding: 20,
+        fontFamily: "system-ui, -apple-system, BlinkMacSystemFont",
+      }}
+    >
+      <h1>Predix</h1>
 
-      <p style={styles.text}>
-        Logged in as:
-        <br />
-        <strong>{user?.id}</strong>
-      </p>
+      {!authenticated && (
+        <button onClick={login} style={{ padding: 12, fontSize: 16 }}>
+          Login with Privy
+        </button>
+      )}
 
-      <button
-        style={styles.secondaryButton}
-        onClick={async () => {
-          try {
-            const res = await fetch(
-              "https://predix-backend.onrender.com/auth/privy",
-              {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ user }),
-              }
-            );
+      {authenticated && (
+        <>
+          <p>✅ Logged in</p>
+          <pre
+            style={{
+              background: "#111",
+              color: "#0f0",
+              padding: 10,
+              overflowX: "auto",
+            }}
+          >
+            {JSON.stringify(user, null, 2)}
+          </pre>
 
-            const data = await res.json();
-            alert(JSON.stringify(data, null, 2));
-          } catch (err) {
-            alert("Backend auth failed");
-          }
-        }}
-      >
-        Verify Backend Auth
-      </button>
+          <button
+            onClick={verifyBackendAuth}
+            style={{ padding: 12, fontSize: 16, marginRight: 10 }}
+          >
+            Verify Backend Auth
+          </button>
 
-      <button style={styles.linkButton} onClick={logout}>
-        Logout
-      </button>
+          <button
+            onClick={logout}
+            style={{ padding: 12, fontSize: 16 }}
+          >
+            Logout
+          </button>
+        </>
+      )}
     </div>
   );
 }
 
-/**
- * 🔹 Render App
- */
+/* ===============================
+   🚀 React Mount (DO NOT TOUCH)
+================================ */
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <PrivyProvider
       appId="cmk602oo400ebjs0cgw0vbbao"
       config={{
+        loginMethods: ["email", "wallet"],
         appearance: {
           theme: "light",
-          accentColor: "#6366f1",
         },
-        loginMethods: ["email", "wallet"],
       }}
     >
       <App />
     </PrivyProvider>
   </React.StrictMode>
 );
-
-/**
- * 🔹 Mobile-friendly inline styles
- */
-const styles: Record<string, React.CSSProperties> = {
-  center: {
-    minHeight: "100vh",
-    padding: "24px",
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "center",
-    alignItems: "center",
-    textAlign: "center",
-    fontFamily: "system-ui, sans-serif",
-  },
-  title: {
-    fontSize: "28px",
-    marginBottom: "12px",
-  },
-  text: {
-    fontSize: "16px",
-    marginBottom: "20px",
-    color: "#555",
-  },
-  primaryButton: {
-    padding: "14px 20px",
-    fontSize: "16px",
-    borderRadius: "8px",
-    border: "none",
-    backgroundColor: "#6366f1",
-    color: "white",
-    cursor: "pointer",
-    width: "100%",
-    maxWidth: "280px",
-  },
-  secondaryButton: {
-    padding: "12px 18px",
-    fontSize: "14px",
-    borderRadius: "8px",
-    border: "1px solid #ccc",
-    backgroundColor: "#f9f9f9",
-    cursor: "pointer",
-    marginTop: "12px",
-    width: "100%",
-    maxWidth: "280px",
-  },
-  linkButton: {
-    marginTop: "16px",
-    background: "none",
-    border: "none",
-    color: "#6366f1",
-    cursor: "pointer",
-    fontSize: "14px",
-  },
-};
