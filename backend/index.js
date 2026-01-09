@@ -1,51 +1,42 @@
-import cors from "cors";
-import authRoutes from "./auth.js";
 import express from "express";
 import cors from "cors";
-import { PrivyClient } from "@privy-io/server-auth";
+import authRoutes from "./auth.js";
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-/* 🔐 Privy client */
-const privy = new PrivyClient(
-  process.env.PRIVY_APP_ID,
-  process.env.PRIVY_APP_SECRET
+/**
+ * ✅ STEP 3 — REQUIRED
+ * Allows backend to read JSON bodies
+ */
+app.use(express.json());
+
+/**
+ * ✅ CORS — allow frontend + Privy callbacks
+ */
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
 );
 
-/* ✅ REQUIRED middleware */
-app.use(express.json());
-app.use(cors());
+/**
+ * ✅ Auth routes
+ */
 app.use("/auth", authRoutes);
 
-/* 🔎 Health check */
-app.get("/", (_req, res) => {
-  res.json({ ok: true, service: "predix-backend" });
+/**
+ * ✅ Health check
+ */
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
 });
 
-/* 🔐 PRIVY AUTH VERIFY */
-app.post("/auth/privy", async (req, res) => {
-  try {
-    const { user } = req.body;
-
-    if (!user?.id) {
-      return res.status(400).json({ error: "Missing user object" });
-    }
-
-    // Verify user with Privy
-    const verifiedUser = await privy.getUser(user.id);
-
-    return res.json({
-      ok: true,
-      userId: verifiedUser.id,
-    });
-  } catch (err) {
-    console.error("❌ Privy auth error:", err);
-    res.status(401).json({ error: "Privy verification failed" });
-  }
-});
-
-/* 🚀 Start server */
+/**
+ * ✅ Start server
+ */
 app.listen(PORT, () => {
-  console.log(`🚀 Predix backend running on ${PORT}`);
+  console.log(`🚀 Predix backend running on port ${PORT}`);
 });
