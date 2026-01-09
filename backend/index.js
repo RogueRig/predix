@@ -18,10 +18,13 @@ app.use(express.json());
 const PRIVY_APP_ID = process.env.PRIVY_APP_ID;
 
 if (!PRIVY_APP_ID) {
-  console.error("❌ PRIVY_APP_ID missing");
+  console.error("❌ PRIVY_APP_ID is missing");
   process.exit(1);
 }
 
+/* ===============================
+   JWKS Client
+================================ */
 const jwks = jwksClient({
   jwksUri: "https://auth.privy.io/.well-known/jwks.json",
   cache: true,
@@ -33,7 +36,10 @@ const jwks = jwksClient({
 ================================ */
 function getKey(header, callback) {
   jwks.getSigningKey(header.kid, (err, key) => {
-    if (err) return callback(err);
+    if (err) {
+      console.error("❌ JWKS error:", err.message);
+      return callback(err);
+    }
     callback(null, key.getPublicKey());
   });
 }
@@ -43,19 +49,15 @@ function getKey(header, callback) {
 ================================ */
 app.post("/auth/privy", (req, res) => {
   try {
-    // ✅ Accept token from header OR body
-    let token = null;
-
     const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      token = authHeader.replace("Bearer ", "");
-    } else if (req.body?.token) {
-      token = req.body.token;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        error: "Missing Authorization header (Bearer token required)",
+      });
     }
 
-    if (!token) {
-      return res.status(401).json({ error: "Missing Privy access token" });
-    }
+    const token = authHeader.replace("Bearer ", "");
 
     jwt.verify(
       token,
@@ -71,12 +73,12 @@ app.post("/auth/privy", (req, res) => {
           return res.status(401).json({ error: "Invalid Privy token" });
         }
 
-        // ✅ VERIFIED
+        // ✅ VERIFIED TOKEN
         return res.json({
           ok: true,
           userId: decoded.sub,
-          wallet: decoded.wallet_address ?? null,
           email: decoded.email ?? null,
+          wallet: decoded.wallet_address ?? null,
           issuer: decoded.iss,
         });
       }
