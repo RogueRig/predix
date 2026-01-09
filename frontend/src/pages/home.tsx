@@ -46,7 +46,7 @@ function Home() {
         {loading && <p className="loading" role="status" aria-live="polite">Loading...</p>}
         
         {error && (
-          <div className="error">
+          <div className="error" role="alert" aria-live="assertive">
             <p>Error: {error}</p>
           </div>
         )}
