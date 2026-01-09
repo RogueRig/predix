@@ -96,6 +96,7 @@ Render makes it easy to deploy Node.js applications. Follow these steps:
    > Note: Render automatically sets the `PORT` environment variable for your service.
    > Your server should listen on `process.env.PORT`, and you typically do not need to
    > configure `PORT` manually in the Render dashboard.
+
 3. Click **"Save Changes"**
 4. Your service will automatically redeploy
 
@@ -160,9 +161,6 @@ In your React components, you make requests to the backend:
 ```typescript
 // Example: Fetching data from the backend
 async function fetchData() {
-  const response = await fetch(`${import.meta.env.VITE_API_URL}/api/data`);
-  const data = await response.json();
-  return data;
   try {
     const response = await fetch(`${import.meta.env.VITE_API_URL}/api/data`);
     if (!response.ok) {
@@ -203,6 +201,9 @@ async function createItem(item: unknown) {
 Your backend listens for these requests and sends responses:
 
 ```javascript
+// Middleware to parse JSON request bodies
+app.use(express.json());
+
 // Example: Backend API endpoint
 app.get('/api/data', (req, res) => {
   // Get data from database
@@ -210,8 +211,6 @@ app.get('/api/data', (req, res) => {
   res.json(data);
 });
 
-// Middleware to parse JSON request bodies
-app.use(express.json());
 // Always validate and sanitize input on the backend before using it.
 app.post('/api/items', (req, res) => {
   const { name, price } = req.body || {};
