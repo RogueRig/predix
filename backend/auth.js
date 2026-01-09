@@ -1,29 +1,20 @@
-import express from "express";
+import fetch from "node-fetch";
 
-const router = express.Router();
+export async function verifyPrivyToken(token) {
+  const res = await fetch("https://auth.privy.io/api/v1/verify", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Basic ${Buffer.from(
+        `${process.env.PRIVY_APP_ID}:${process.env.PRIVY_APP_SECRET}`
+      ).toString("base64")}`,
+    },
+    body: JSON.stringify({ token }),
+  });
 
-router.post("/privy", async (req, res) => {
-  try {
-    const { user } = req.body;
-
-    if (!user || !user.id) {
-      return res.status(401).json({
-        ok: false,
-        error: "Invalid Privy user",
-      });
-    }
-
-    // ✅ SUCCESS
-    return res.json({
-      ok: true,
-      userId: user.id,
-      email: user.email?.address || null,
-      wallet: user.wallet?.address || null,
-    });
-  } catch (err) {
-    console.error("Auth error:", err);
-    res.status(500).json({ ok: false });
+  if (!res.ok) {
+    throw new Error("Invalid Privy token");
   }
-});
 
-export default router;
+  return await res.json();
+}
