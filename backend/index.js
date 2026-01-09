@@ -1,3 +1,4 @@
+import cors from "cors";
 import authRoutes from "./auth.js";
 import express from "express";
 import cors from "cors";
@@ -16,6 +17,13 @@ const privy = new PrivyClient(
 app.use(cors());
 app.use(express.json());
 app.use("/auth", authRoutes);
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type"],
+  })
+);
 
 /* 🔎 Health check */
 app.get("/", (_req, res) => {
