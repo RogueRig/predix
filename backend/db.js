@@ -3,8 +3,8 @@ const { Pool } = require('pg');
 // Create a connection pool using DATABASE_URL from environment
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Handle SSL configuration: disable only for localhost, enable for all remote databases
-  ssl: process.env.DATABASE_URL?.match(/localhost|127\.0\.0\.1/) 
+  // Handle SSL configuration: disable only for localhost connections, enable for all remote databases
+  ssl: process.env.DATABASE_URL?.includes('localhost') || process.env.DATABASE_URL?.includes('127.0.0.1')
     ? false 
     : { rejectUnauthorized: true }
 });
@@ -22,8 +22,10 @@ const query = async (text, params) => {
     const start = Date.now();
     const res = await pool.query(text, params);
     const duration = Date.now() - start;
-    // Log query execution details without exposing sensitive data
-    console.log('Executed query', { duration, rows: res.rowCount });
+    // Log query execution details in development only
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('Executed query', { duration, rows: res.rowCount });
+    }
     return res;
   } catch (error) {
     console.error('Query error:', error.message);
