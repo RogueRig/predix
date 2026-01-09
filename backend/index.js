@@ -2,6 +2,7 @@ import express from 'express';
 import { checkDb, pool } from './db.js';
 import fs from 'fs';
 import path from 'path';
+import authRoutes from "./routes/auth.js";
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -37,7 +38,8 @@ async function runMigrations() {
 async function start() {
   await checkDb();
   await runMigrations(); // 🔥 auto-run safely
-
+  app.use(express.json());
+  app.use("/auth", authRoutes);
   app.listen(PORT, () => {
     console.log(`🚀 Predix backend running on port ${PORT}`);
   });
