@@ -1,20 +1,14 @@
 import { createRoot } from "react-dom/client";
-import { PrivyProvider } from "@privy-io/react-auth";
-import App from "./App";
 
 const root = document.getElementById("root");
 
 if (!root) {
-  document.body.innerHTML = "❌ root div not found";
+  document.body.innerHTML = "<h1>❌ Root div not found</h1>";
 } else {
   createRoot(root).render(
-    <PrivyProvider
-      appId={import.meta.env.VITE_PRIVY_APP_ID}
-      config={{
-        loginMethods: ["email", "wallet"],
-      }}
-    >
-      <App />
-    </PrivyProvider>
+    <div style={{ padding: 20 }}>
+      <h1>✅ Predix is rendering</h1>
+      <p>If you see this, React works.</p>
+    </div>
   );
 }
