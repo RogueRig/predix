@@ -1,13 +1,6 @@
+import React from "react";
 import { createRoot } from "react-dom/client";
+import App from "./App";
 
-const rootEl = document.getElementById("root");
-
-if (!rootEl) {
-  document.body.innerHTML = "❌ Root element not found";
-} else {
-  createRoot(rootEl).render(
-    <div style={{ padding: 24, fontSize: 20 }}>
-      ✅ React mounted successfully
-    </div>
-  );
-}
+const root = document.getElementById("root")!;
+createRoot(root).render(<App />);
