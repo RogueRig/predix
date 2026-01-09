@@ -1,14 +1,17 @@
-import { createRoot } from "react-dom/client";
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { PrivyProvider } from "@privy-io/react-auth";
+import App from "./App";
 
-const root = document.getElementById("root");
-
-if (!root) {
-  throw new Error("❌ Root div not found");
-}
-
-createRoot(root).render(
-  <div style={{ padding: 20 }}>
-    <h1>✅ Predix React is LIVE</h1>
-    <p>If you see this, React is mounted correctly.</p>
-  </div>
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <PrivyProvider
+      appId={import.meta.env.VITE_PRIVY_APP_ID}
+      config={{
+        loginMethods: ["wallet", "email"],
+      }}
+    >
+      <App />
+    </PrivyProvider>
+  </React.StrictMode>
 );
