@@ -18,6 +18,35 @@ const pool = new Pool({
   password: dbPassword,
 });
 
+let poolEnded = false;
+
+async function shutdownPool(signal) {
+  if (poolEnded) {
+    return;
+  }
+  poolEnded = true;
+  try {
+    await pool.end();
+  } catch (err) {
+    // Optionally log the error; avoid throwing during shutdown
+    // console.error(`Error closing DB pool on ${signal}:`, err);
+  }
+}
+
+const terminationSignals = ['SIGINT', 'SIGTERM'];
+terminationSignals.forEach((signal) => {
+  process.on(signal, () => {
+    shutdownPool(signal).finally(() => {
+      // Allow default behavior after cleanup
+      process.exit(0);
+    });
+  });
+});
+
+process.on('beforeExit', () => {
+  // Ensure pool is closed when Node is about to exit naturally
+  shutdownPool('beforeExit');
+});
 export async function checkConnection() {
   const client = await pool.connect();
   try {
