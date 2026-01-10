@@ -48,14 +48,13 @@ function PortfolioPage() {
   const [portfolio, setPortfolio] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
 
-  /* ---------- Polymarket markets ---------- */
   const [markets, setMarkets] = React.useState<any[]>([]);
   const [marketsLoading, setMarketsLoading] = React.useState(false);
   const [marketsError, setMarketsError] = React.useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = React.useState<string | null>(null);
 
   /* ===============================
-     Backend bootstrap (unchanged)
+     Backend bootstrap (NULL SAFE)
   ================================ */
   React.useEffect(() => {
     let cancelled = false;
@@ -66,29 +65,30 @@ function PortfolioPage() {
       try {
         setLoading(true);
 
-        let backendToken: string | null =
-          localStorage.getItem("backend_token");
+        let backendToken = localStorage.getItem("backend_token");
 
         if (!backendToken) {
-          let tempPrivyToken: string | null = null;
+          let privyToken: string | null = null;
 
           for (let i = 0; i < 10; i++) {
             const t = await getAccessToken();
             if (t) {
-              tempPrivyToken = t;
+              privyToken = t;
               break;
             }
             await new Promise((r) => setTimeout(r, 300));
           }
 
-          if (!tempPrivyToken) throw new Error("Privy token unavailable");
+          if (!privyToken) {
+            throw new Error("Privy token unavailable");
+          }
 
           const authRes = await fetch(
             "https://predix-backend.onrender.com/auth/privy",
             {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${tempPrivyToken}`,
+                Authorization: `Bearer ${privyToken}`,
               },
             }
           );
@@ -102,11 +102,17 @@ function PortfolioPage() {
           localStorage.setItem("backend_token", backendToken);
         }
 
+        if (!backendToken) {
+          throw new Error("Backend token missing");
+        }
+
+        const authToken: string = backendToken;
+
         const pRes = await fetch(
           "https://predix-backend.onrender.com/portfolio",
           {
             headers: {
-              Authorization: `Bearer ${backendToken}`,
+              Authorization: `Bearer ${authToken}`,
             },
           }
         );
@@ -130,8 +136,7 @@ function PortfolioPage() {
   }, [ready, authenticated, getAccessToken]);
 
   /* ===============================
-     🌐 Fetch Top Polymarket Markets
-     FRONTEND ONLY — GAMMA API
+     🌐 Polymarket markets (frontend)
   ================================ */
   async function loadTopMarkets() {
     setMarketsLoading(true);
@@ -142,16 +147,12 @@ function PortfolioPage() {
         "https://gamma-api.polymarket.com/events?order=volume&direction=desc"
       );
 
-      if (!res.ok) throw new Error("Failed to fetch Polymarket markets");
+      if (!res.ok) throw new Error("Failed to fetch markets");
 
       const json = await res.json();
       const events = json?.data ?? [];
 
-      const filtered = events
-        .filter((e: any) => !e.resolved)
-        .slice(0, 20);
-
-      setMarkets(filtered);
+      setMarkets(events.filter((e: any) => !e.resolved).slice(0, 20));
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (err: any) {
       setMarketsError(err.message);
@@ -161,16 +162,13 @@ function PortfolioPage() {
   }
 
   React.useEffect(() => {
-    if (ready && authenticated) {
-      loadTopMarkets();
-    }
+    if (ready && authenticated) loadTopMarkets();
   }, [ready, authenticated]);
 
-  /* ---------- totals ---------- */
   const totalPositions = portfolio.length;
-  const totalShares = portfolio.reduce((sum, p) => sum + Number(p.shares), 0);
+  const totalShares = portfolio.reduce((s, p) => s + Number(p.shares), 0);
   const totalInvested = portfolio.reduce(
-    (sum, p) => sum + Number(p.shares) * Number(p.avg_price),
+    (s, p) => s + Number(p.shares) * Number(p.avg_price),
     0
   );
 
@@ -178,66 +176,28 @@ function PortfolioPage() {
     <div style={{ padding: 20 }}>
       <h1>Predix</h1>
 
-      {/* ===== Polymarket Markets ===== */}
-      <div
-        style={{
-          border: "1px solid #333",
-          borderRadius: 12,
-          padding: 16,
-          marginBottom: 24,
-        }}
-      >
-        <h2>Top Polymarket Markets</h2>
+      <button onClick={loadTopMarkets} disabled={marketsLoading}>
+        {marketsLoading ? "Refreshing…" : "Refresh Markets"}
+      </button>
 
-        <button onClick={loadTopMarkets} disabled={marketsLoading}>
-          {marketsLoading ? "Refreshing…" : "Refresh Prices"}
-        </button>
+      {lastUpdated && (
+        <div style={{ fontSize: 12 }}>Last updated: {lastUpdated}</div>
+      )}
 
-        {lastUpdated && (
-          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-            Last updated: {lastUpdated}
-          </div>
-        )}
+      {marketsError && <p style={{ color: "red" }}>{marketsError}</p>}
 
-        {marketsError && (
-          <p style={{ color: "red", marginTop: 10 }}>{marketsError}</p>
-        )}
+      {markets.map((m) => (
+        <div key={m.id} style={{ marginTop: 10 }}>
+          <strong>{m.title}</strong>
+        </div>
+      ))}
 
-        {markets.map((m) => (
-          <div
-            key={m.id}
-            style={{
-              marginTop: 12,
-              padding: 12,
-              borderRadius: 10,
-              background: "#111",
-              color: "#fff",
-            }}
-          >
-            <div style={{ fontWeight: "bold" }}>{m.title}</div>
-            <div style={{ fontSize: 12, opacity: 0.8 }}>
-              Volume: {m.volume ?? "—"}
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.8 }}>
-              Ends: {m.endDate ? new Date(m.endDate).toLocaleDateString() : "—"}
-            </div>
-          </div>
-        ))}
-      </div>
+      <hr />
 
-      {/* ===== Portfolio ===== */}
-      <div
-        style={{
-          background: "#111",
-          color: "#ffffff",
-          borderRadius: 12,
-          padding: 16,
-          marginBottom: 20,
-        }}
-      >
-        <div><strong>Total Positions:</strong> {totalPositions}</div>
-        <div><strong>Total Shares:</strong> {totalShares}</div>
-        <div><strong>Total Invested:</strong> {totalInvested.toFixed(2)}</div>
+      <div>
+        <div>Total Positions: {totalPositions}</div>
+        <div>Total Shares: {totalShares}</div>
+        <div>Total Invested: {totalInvested.toFixed(2)}</div>
       </div>
 
       {loading && <p>Loading portfolio…</p>}
@@ -277,9 +237,6 @@ function App() {
   );
 }
 
-/* ===============================
-   🔌 Mount
-================================ */
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <PrivyProvider
     appId="cmk602oo400ebjs0cgw0vbbao"
