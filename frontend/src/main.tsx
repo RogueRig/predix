@@ -14,7 +14,7 @@ import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 ================================ */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { ready, authenticated } = usePrivy();
-  if (!ready) return <p style={{ padding: 20 }}>Loading Privy…</p>;
+  if (!ready) return <p style={{ padding: 20 }}>Loading…</p>;
   return authenticated ? <>{children}</> : <Navigate to="/" replace />;
 }
 
@@ -26,12 +26,10 @@ function LoginPage() {
   const navigate = useNavigate();
 
   React.useEffect(() => {
-    if (ready && authenticated) {
-      navigate("/portfolio");
-    }
+    if (ready && authenticated) navigate("/dashboard");
   }, [ready, authenticated, navigate]);
 
-  if (!ready) return <p style={{ padding: 20 }}>Loading Privy…</p>;
+  if (!ready) return <p style={{ padding: 20 }}>Loading…</p>;
 
   return (
     <div style={{ padding: 20 }}>
@@ -42,14 +40,17 @@ function LoginPage() {
 }
 
 /* ===============================
-   📊 Portfolio Page
+   📊 Dashboard Page
 ================================ */
-function PortfolioPage() {
+function DashboardPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
-  const [portfolio, setPortfolio] = React.useState<any[]>([]);
-  const [loading, setLoading] = React.useState<boolean>(true);
+  const [backendToken, setBackendToken] = React.useState<string | null>(null);
+  const [markets, setMarkets] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
 
+  /* ---------- bootstrap auth ---------- */
   React.useEffect(() => {
     let cancelled = false;
 
@@ -58,28 +59,17 @@ function PortfolioPage() {
 
       try {
         setLoading(true);
+        setError(null);
 
-        // 🔒 STEP 1: Resolve backend token into a GUARANTEED string
-        let storedToken = localStorage.getItem("backend_token");
-        let backendToken: string;
+        let token = localStorage.getItem("backend_token");
 
-        if (!storedToken) {
-          let privyToken: string | null = null;
-
-          for (let i = 0; i < 10; i++) {
-            const t = await getAccessToken();
-            if (t) {
-              privyToken = t;
-              break;
-            }
-            await new Promise((r) => setTimeout(r, 300));
-          }
-
+        if (!token) {
+          const privyToken = await getAccessToken();
           if (!privyToken) {
             throw new Error("Privy token unavailable");
           }
 
-          const authRes = await fetch(
+          const res = await fetch(
             "https://predix-backend.onrender.com/auth/privy",
             {
               method: "POST",
@@ -89,36 +79,19 @@ function PortfolioPage() {
             }
           );
 
-          const authJson = await authRes.json();
-
-          if (!authRes.ok || !authJson.token) {
+          const json: { token?: string } = await res.json();
+          if (!res.ok || !json.token) {
             throw new Error("Backend auth failed");
           }
 
-          backendToken = authJson.token;
-          localStorage.setItem("backend_token", backendToken);
-        } else {
-          backendToken = storedToken;
+          token = json.token;
+          localStorage.setItem("backend_token", token);
         }
 
-        // 🔒 STEP 2: backendToken is now string (NOT nullable)
-
-        const pRes = await fetch(
-          "https://predix-backend.onrender.com/portfolio",
-          {
-            headers: {
-              Authorization: `Bearer ${backendToken}`,
-            },
-          }
-        );
-
-        const pJson = await pRes.json();
-        if (!pRes.ok) throw new Error("Failed to load portfolio");
-
-        if (!cancelled) setPortfolio(pJson.portfolio || []);
-      } catch {
+        if (!cancelled) setBackendToken(token);
+      } catch (err: any) {
         localStorage.removeItem("backend_token");
-        if (!cancelled) setPortfolio([]);
+        if (!cancelled) setError(err.message || "Auth failed");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -130,29 +103,65 @@ function PortfolioPage() {
     };
   }, [ready, authenticated, getAccessToken]);
 
+  /* ---------- fetch markets ---------- */
+  React.useEffect(() => {
+    if (!backendToken) return;
+
+    async function loadMarkets() {
+      try {
+        setLoading(true);
+
+        const res = await fetch(
+          "https://predix-backend.onrender.com/polymarket/clob-top"
+        );
+
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error(json.error || "Failed to load markets");
+        }
+
+        setMarkets(Array.isArray(json.markets) ? json.markets : []);
+      } catch (err: any) {
+        setError(err.message || "Market fetch failed");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadMarkets();
+  }, [backendToken]);
+
+  if (loading) return <p style={{ padding: 20 }}>Loading dashboard…</p>;
+  if (error) return <p style={{ padding: 20, color: "red" }}>{error}</p>;
+
   return (
     <div style={{ padding: 20 }}>
-      <h1>Portfolio</h1>
+      <h1>Top Polymarket Markets</h1>
 
-      {loading && <p>Loading portfolio…</p>}
-      {!loading && portfolio.length === 0 && <p>No positions yet.</p>}
+      {markets.length === 0 && <p>No markets available.</p>}
 
-      {portfolio.map((p) => (
+      {markets.map((m) => (
         <div
-          key={p.id}
+          key={m.market_id}
           style={{
             border: "1px solid #333",
             borderRadius: 10,
             padding: 14,
-            marginBottom: 14,
+            marginBottom: 12,
             background: "#111",
             color: "#fff",
           }}
         >
-          <div><strong>Market:</strong> {p.market_id}</div>
-          <div><strong>Outcome:</strong> {p.outcome}</div>
-          <div><strong>Shares:</strong> {p.shares}</div>
-          <div><strong>Avg Price:</strong> {p.avg_price}</div>
+          <div style={{ fontWeight: "bold", marginBottom: 6 }}>
+            {m.market_id}
+          </div>
+
+          {Array.isArray(m.outcomes) &&
+            m.outcomes.map((o: any) => (
+              <div key={o.name}>
+                {o.name}: {(Number(o.price) * 100).toFixed(2)}%
+              </div>
+            ))}
         </div>
       ))}
 
@@ -177,10 +186,10 @@ function App() {
       <Routes>
         <Route path="/" element={<LoginPage />} />
         <Route
-          path="/portfolio"
+          path="/dashboard"
           element={
             <ProtectedRoute>
-              <PortfolioPage />
+              <DashboardPage />
             </ProtectedRoute>
           }
         />
@@ -191,12 +200,9 @@ function App() {
 }
 
 /* ===============================
-   🔌 Mount (STRICT-SAFE)
+   🔌 Mount
 ================================ */
-const rootEl = document.getElementById("root");
-if (!rootEl) throw new Error("Root element not found");
-
-ReactDOM.createRoot(rootEl).render(
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <PrivyProvider
     appId="cmk602oo400ebjs0cgw0vbbao"
     config={{ loginMethods: ["email", "wallet"] }}
