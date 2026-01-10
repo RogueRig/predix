@@ -44,23 +44,58 @@ if (!PRIVY_APP_ID || !PRIVY_APP_SECRET) {
 const privy = new PrivyClient(PRIVY_APP_ID, PRIVY_APP_SECRET);
 
 /* ===============================
-   Ensure Users Table
+   🔧 DB Migration (SAFE)
 ================================ */
-async function ensureUsersTable() {
+async function ensureUsersSchema() {
+  // 1️⃣ Ensure table exists (legacy-safe)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      privy_user_id TEXT UNIQUE NOT NULL,
       email TEXT,
       wallet_address TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
-  console.log("✅ Users table ensured");
+
+  // 2️⃣ Add privy_user_id column if missing
+  const { rows } = await pool.query(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_name = 'users' AND column_name = 'privy_user_id';
+  `);
+
+  if (rows.length === 0) {
+    console.log("🛠 Adding missing privy_user_id column");
+
+    await pool.query(`
+      ALTER TABLE users
+      ADD COLUMN privy_user_id TEXT;
+    `);
+
+    await pool.query(`
+      UPDATE users
+      SET privy_user_id = id::text
+      WHERE privy_user_id IS NULL;
+    `);
+
+    await pool.query(`
+      ALTER TABLE users
+      ALTER COLUMN privy_user_id SET NOT NULL;
+    `);
+
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS users_privy_user_id_idx
+      ON users (privy_user_id);
+    `);
+
+    console.log("✅ privy_user_id column added safely");
+  } else {
+    console.log("✅ privy_user_id column already exists");
+  }
 }
 
-ensureUsersTable().catch((err) => {
-  console.error("❌ Failed creating users table:", err);
+ensureUsersSchema().catch((err) => {
+  console.error("❌ Failed DB migration:", err);
   process.exit(1);
 });
 
@@ -72,31 +107,18 @@ async function requirePrivyAuth(req, res, next) {
 
   try {
     const authHeader = req.headers.authorization;
-    console.log("🔑 Authorization header:", authHeader ? "PRESENT" : "MISSING");
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      console.error("❌ Missing or invalid Authorization header");
-      return res.status(401).json({
-        error: "Missing Authorization header",
-      });
+      return res.status(401).json({ error: "Missing Authorization header" });
     }
 
     const token = authHeader.replace("Bearer ", "");
-    console.log("🔐 Token length:", token.length);
 
-    // ✅ Verify with Privy
     const verified = await privy.verifyAuthToken(token);
-    console.log("✅ Privy verified user:", verified.userId);
 
     const privyUserId = verified.userId;
     const email = verified.email ?? null;
     const wallet = verified.wallet?.address ?? null;
-
-    console.log("💾 Upserting user in DB:", {
-      privyUserId,
-      email,
-      wallet,
-    });
 
     const { rows } = await pool.query(
       `
@@ -111,43 +133,25 @@ async function requirePrivyAuth(req, res, next) {
       [privyUserId, email, wallet]
     );
 
-    console.log("✅ DB user resolved:", rows[0].id);
-
     req.user = rows[0];
     next();
   } catch (err) {
-    console.error("❌ Auth failed at requirePrivyAuth");
-    console.error("❌ Reason:", err.message);
-    return res.status(401).json({
-      error: "Invalid Privy token",
-    });
+    console.error("❌ Auth failed:", err.message);
+    return res.status(401).json({ error: "Invalid Privy token" });
   }
 }
 
 /* ===============================
-   Auth Diagnostic
+   Routes
 ================================ */
 app.post("/auth/privy", requirePrivyAuth, (req, res) => {
-  console.log("🧪 /auth/privy success");
-  res.json({
-    ok: true,
-    user: req.user,
-  });
+  res.json({ ok: true, user: req.user });
 });
 
-/* ===============================
-   ✅ Canonical User Endpoint
-================================ */
 app.get("/me", requirePrivyAuth, (req, res) => {
-  console.log("👤 /me success for user:", req.user.id);
-  res.json({
-    user: req.user,
-  });
+  res.json({ user: req.user });
 });
 
-/* ===============================
-   Health Check
-================================ */
 app.get("/", (_, res) => {
   res.send("✅ Predix backend running");
 });
