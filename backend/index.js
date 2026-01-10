@@ -188,46 +188,54 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   🌐 Polymarket — LONG TERM RESOLVER
+   🌐 Polymarket — SLUG → MARKET RESOLVER (PRODUCTION SAFE)
 ================================ */
-app.get("/polymarket/market/:slug", async (req, res) => {
+app.get("/polymarket/resolve", async (req, res) => {
   try {
-    const { slug } = req.params;
+    const { slug } = req.query;
+    if (!slug) {
+      return res.status(400).json({ error: "Missing slug" });
+    }
 
-    const response = await fetch(
-      `https://polymarket.com/api/event/${slug}`
+    // 1️⃣ Search event by slug/text
+    const searchRes = await fetch(
+      `https://gamma-api.polymarket.com/events?search=${encodeURIComponent(
+        slug
+      )}`
     );
 
-    if (!response.ok) {
-      return res.status(404).json({ error: "Market not found" });
+    const searchJson = await searchRes.json();
+    const event = searchJson?.data?.[0];
+
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
     }
 
-    const event = await response.json();
-
-    if (event.resolved) {
-      return res.status(400).json({ error: "Market already resolved" });
+    const marketId = event.markets?.[0]?.id;
+    if (!marketId) {
+      return res.status(404).json({ error: "Market ID not found" });
     }
 
-    const endTime = new Date(event.endDate);
-    const now = new Date();
-    const daysLeft =
-      (endTime.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+    // 2️⃣ Fetch market pricing from CLOB
+    const marketRes = await fetch(
+      `https://clob.polymarket.com/markets/${marketId}`
+    );
 
-    if (daysLeft < 3) {
-      return res
-        .status(400)
-        .json({ error: "Market too short-term for portfolio" });
-    }
+    const market = await marketRes.json();
 
     res.json({
       slug,
       question: event.title,
       endDate: event.endDate,
-      outcomes: event.markets?.[0]?.outcomes ?? [],
+      market_id: marketId,
+      outcomes: market.outcomes?.map((o) => ({
+        name: o.name,
+        price: o.price,
+      })),
     });
   } catch (err) {
-    console.error("Polymarket resolver failed:", err);
-    res.status(500).json({ error: "Polymarket resolver failed" });
+    console.error("Polymarket resolve failed:", err);
+    res.status(500).json({ error: "Polymarket resolve failed" });
   }
 });
 
