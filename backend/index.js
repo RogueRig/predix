@@ -56,7 +56,6 @@ const privy = new PrivyClient(
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 
-  // Base table (no balance assumption)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID,
@@ -67,7 +66,6 @@ async function migrate() {
     );
   `);
 
-  // Ensure id exists everywhere
   await pool.query(`
     UPDATE users
     SET id = gen_random_uuid()
@@ -80,20 +78,17 @@ async function migrate() {
     ALTER COLUMN id SET NOT NULL;
   `);
 
-  // ✅ SAFE balance addition (THIS FIXES YOUR ERROR)
   await pool.query(`
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS balance NUMERIC NOT NULL DEFAULT 1000;
   `);
 
-  // Backfill just in case
   await pool.query(`
     UPDATE users
     SET balance = 1000
     WHERE balance IS NULL;
   `);
 
-  // Primary key
   await pool.query(`
     DO $$
     BEGIN
@@ -105,7 +100,6 @@ async function migrate() {
     END$$;
   `);
 
-  // Portfolio table
   await pool.query(`
     CREATE TABLE IF NOT EXISTS portfolios (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -215,6 +209,68 @@ app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
   );
 
   res.json({ balance: rows[0].balance });
+});
+
+/* ===============================
+   Paper Trade BUY (NEW ✅)
+================================ */
+app.post("/trade/buy", requireBackendAuth, async (req, res) => {
+  const { market_id, outcome, shares, price } = req.body;
+
+  if (
+    typeof market_id !== "string" ||
+    typeof outcome !== "string" ||
+    typeof shares !== "number" ||
+    typeof price !== "number" ||
+    shares <= 0 ||
+    price <= 0
+  ) {
+    return res.status(400).json({ error: "Invalid trade input" });
+  }
+
+  const cost = shares * price;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const balanceRes = await client.query(
+      `SELECT balance FROM users WHERE id = $1 FOR UPDATE`,
+      [req.userId]
+    );
+
+    const balance = Number(balanceRes.rows[0].balance);
+
+    if (balance < cost) {
+      throw new Error("Insufficient balance");
+    }
+
+    await client.query(
+      `UPDATE users SET balance = balance - $1 WHERE id = $2`,
+      [cost, req.userId]
+    );
+
+    const insertRes = await client.query(
+      `
+      INSERT INTO portfolios (user_id, market_id, outcome, shares, avg_price)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *;
+      `,
+      [req.userId, market_id, outcome, shares, price]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      balance: balance - cost,
+      position: insertRes.rows[0],
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
 });
 
 /* ===============================
