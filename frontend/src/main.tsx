@@ -10,15 +10,12 @@ import {
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 
 /* ===============================
-   🔐 Auth Guard (Privy ONLY)
+   🔐 Auth Guard
 ================================ */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { ready, authenticated } = usePrivy();
 
-  if (!ready) {
-    return <p style={{ padding: 20 }}>Loading Privy…</p>;
-  }
-
+  if (!ready) return <p style={{ padding: 20 }}>Loading Privy…</p>;
   return authenticated ? <>{children}</> : <Navigate to="/" replace />;
 }
 
@@ -30,60 +27,51 @@ function LoginPage() {
   const navigate = useNavigate();
 
   React.useEffect(() => {
-    if (ready && authenticated) {
-      navigate("/portfolio");
-    }
+    if (ready && authenticated) navigate("/portfolio");
   }, [ready, authenticated, navigate]);
 
-  if (!ready) {
-    return <p style={{ padding: 20 }}>Loading Privy…</p>;
-  }
+  if (!ready) return <p style={{ padding: 20 }}>Loading Privy…</p>;
 
   return (
-    <div style={{ padding: 20, fontFamily: "system-ui" }}>
+    <div style={{ padding: 20 }}>
       <h1>Predix</h1>
-      <button onClick={login} style={{ padding: 12, fontSize: 16 }}>
-        Login with Privy
-      </button>
+      <button onClick={login}>Login with Privy</button>
     </div>
   );
 }
 
 /* ===============================
-   📊 Portfolio Page (TS SAFE)
+   📊 Portfolio Page (FINAL)
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
-
   const [output, setOutput] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
     let cancelled = false;
 
-    async function bootstrapSession() {
+    async function bootstrap() {
       if (!ready || !authenticated) return;
 
-      setLoading(true);
-      setOutput(null);
-
       try {
-        // 1️⃣ Load backend token if exists
-        let storedToken = localStorage.getItem("backend_token");
+        setLoading(true);
 
-        // 2️⃣ If missing, exchange Privy token
-        if (storedToken === null) {
-          let privyToken: string | null = null;
+        let backendToken = localStorage.getItem("backend_token");
+
+        if (!backendToken) {
+          let tempToken: string | null = null;
 
           for (let i = 0; i < 10; i++) {
-            privyToken = await getAccessToken();
-            if (privyToken) break;
+            tempToken = await getAccessToken();
+            if (tempToken) break;
             await new Promise((r) => setTimeout(r, 300));
           }
 
-          if (privyToken === null) {
-            throw new Error("Privy token unavailable");
-          }
+          if (!tempToken) throw new Error("Privy token unavailable");
+
+          // ⬇️ PROMOTE TO NON-NULL
+          const privyToken: string = tempToken;
 
           const authRes = await fetch(
             "https://predix-backend.onrender.com/auth/privy",
@@ -101,83 +89,61 @@ function PortfolioPage() {
             throw new Error("Backend auth failed");
           }
 
-          storedToken = authJson.token;
-          localStorage.setItem("backend_token", storedToken);
+          backendToken = authJson.token;
+          localStorage.setItem("backend_token", backendToken);
         }
 
-        // ✅ TS GUARANTEE
-        if (storedToken === null) {
-          throw new Error("Backend token missing");
-        }
+        // ⬇️ PROMOTE TO NON-NULL
+        const finalBackendToken: string = backendToken;
 
-        const backendToken = storedToken;
-
-        // 3️⃣ Call /me with backend JWT
         const meRes = await fetch(
           "https://predix-backend.onrender.com/me",
           {
             headers: {
-              Authorization: `Bearer ${backendToken!}`,
+              Authorization: `Bearer ${finalBackendToken}`,
             },
           }
         );
 
         const meJson = await meRes.json();
 
-        if (!meRes.ok) {
-          throw new Error("Failed to load profile");
-        }
+        if (!meRes.ok) throw new Error("Failed to load profile");
 
-        if (!cancelled) {
-          setOutput(meJson);
-        }
+        if (!cancelled) setOutput(meJson);
       } catch (err: any) {
         localStorage.removeItem("backend_token");
-        if (!cancelled) {
-          setOutput({ error: err.message });
-        }
+        if (!cancelled) setOutput({ error: err.message });
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
-    bootstrapSession();
+    bootstrap();
     return () => {
       cancelled = true;
     };
   }, [ready, authenticated, getAccessToken]);
 
   return (
-    <div style={{ padding: 20, fontFamily: "system-ui" }}>
-      <h1>Predix Portfolio</h1>
+    <div style={{ padding: 20 }}>
+      <h1>Portfolio</h1>
 
-      {loading && <p>Loading session…</p>}
+      {loading && <p>Loading…</p>}
 
       {output && (
-        <pre
-          style={{
-            background: "#111",
-            color: "#0f0",
-            padding: 12,
-            overflowX: "auto",
-            fontSize: 13,
-          }}
-        >
+        <pre style={{ background: "#111", color: "#0f0", padding: 12 }}>
           {JSON.stringify(output, null, 2)}
         </pre>
       )}
 
-      <div style={{ marginTop: 12 }}>
-        <button
-          onClick={() => {
-            localStorage.removeItem("backend_token");
-            logout();
-          }}
-          style={{ padding: 12, fontSize: 16 }}
-        >
-          Logout
-        </button>
-      </div>
+      <button
+        onClick={() => {
+          localStorage.removeItem("backend_token");
+          logout();
+        }}
+      >
+        Logout
+      </button>
     </div>
   );
 }
@@ -205,14 +171,12 @@ function App() {
 }
 
 /* ===============================
-   🔌 Mount React
+   🔌 Mount
 ================================ */
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <PrivyProvider
     appId="cmk602oo400ebjs0cgw0vbbao"
-    config={{
-      loginMethods: ["email", "wallet"],
-    }}
+    config={{ loginMethods: ["email", "wallet"] }}
   >
     <App />
   </PrivyProvider>
