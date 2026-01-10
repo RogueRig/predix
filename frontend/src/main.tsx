@@ -174,17 +174,25 @@ function PortfolioPage() {
       )}
 
       {portfolio.map((p) => (
-        <pre
+        <div
           key={p.id}
           style={{
+            border: "1px solid #333",
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
             background: "#111",
-            color: "#0f0",
-            padding: 10,
-            marginBottom: 8,
+            color: "#fff",
           }}
         >
-          {JSON.stringify(p, null, 2)}
-        </pre>
+          <div><strong>Market:</strong> {p.market_id}</div>
+          <div><strong>Outcome:</strong> {p.outcome}</div>
+          <div><strong>Shares:</strong> {p.shares}</div>
+          <div><strong>Avg Price:</strong> {p.avg_price}</div>
+          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+            {new Date(p.created_at).toLocaleString()}
+          </div>
+        </div>
       ))}
 
       <button
