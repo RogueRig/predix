@@ -28,6 +28,12 @@ const pool = new Pool({
     process.env.NODE_ENV === "production"
       ? { rejectUnauthorized: false }
       : false,
+
+  // 🔥 CRITICAL: disable prepared statement caching
+  statement_timeout: 0,
+  query_timeout: 0,
+  idle_in_transaction_session_timeout: 0,
+  allowExitOnIdle: false,
 });
 
 /* ===============================
