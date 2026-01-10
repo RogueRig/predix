@@ -50,62 +50,83 @@ function LoginPage() {
 }
 
 /* ===============================
-   📊 Portfolio Page (SDK SAFE)
+   📊 Portfolio Page (CORRECT FLOW)
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
+  const [backendToken, setBackendToken] = React.useState<string | null>(null);
   const [output, setOutput] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
     let cancelled = false;
 
-    async function loadProfile() {
+    async function runAuthFlow() {
       if (!ready || !authenticated) return;
 
       setLoading(true);
       setOutput(null);
 
-      let token: string | null = null;
-
-      // 🔁 Wait for token to exist (SDK-compatible)
+      // 1️⃣ Get Privy token
+      let privyToken: string | null = null;
       for (let i = 0; i < 10; i++) {
-        token = await getAccessToken();
-        if (token) break;
+        privyToken = await getAccessToken();
+        if (privyToken) break;
         await new Promise((r) => setTimeout(r, 300));
       }
 
-      if (!token) {
+      if (!privyToken) {
         if (!cancelled) {
-          setOutput({ error: "Privy token not available yet" });
+          setOutput({ error: "Privy token not available" });
           setLoading(false);
         }
         return;
       }
 
       try {
-        const res = await fetch(
-          "https://predix-backend.onrender.com/me",
+        // 2️⃣ Exchange Privy token → backend token
+        const authRes = await fetch(
+          "https://predix-backend.onrender.com/auth/privy",
           {
+            method: "POST",
             headers: {
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${privyToken}`,
             },
           }
         );
 
-        const text = await res.text();
+        const authJson = await authRes.json();
+
+        if (!authRes.ok || !authJson.token) {
+          throw new Error("Backend auth failed");
+        }
+
+        const backendJwt = authJson.token;
+        setBackendToken(backendJwt);
+
+        // 3️⃣ Call /me with BACKEND token
+        const meRes = await fetch(
+          "https://predix-backend.onrender.com/me",
+          {
+            headers: {
+              Authorization: `Bearer ${backendJwt}`,
+            },
+          }
+        );
+
+        const meText = await meRes.text();
         let parsed;
         try {
-          parsed = JSON.parse(text);
+          parsed = JSON.parse(meText);
         } catch {
-          parsed = text;
+          parsed = meText;
         }
 
         if (!cancelled) {
           setOutput({
-            httpStatus: res.status,
-            ok: res.ok,
+            httpStatus: meRes.status,
+            ok: meRes.ok,
             response: parsed,
           });
         }
@@ -118,7 +139,7 @@ function PortfolioPage() {
       }
     }
 
-    loadProfile();
+    runAuthFlow();
     return () => {
       cancelled = true;
     };
