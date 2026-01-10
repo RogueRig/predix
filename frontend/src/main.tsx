@@ -14,7 +14,6 @@ import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 ================================ */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { ready, authenticated } = usePrivy();
-
   if (!ready) return <p style={{ padding: 20 }}>Loading Privy…</p>;
   return authenticated ? <>{children}</> : <Navigate to="/" replace />;
 }
@@ -60,20 +59,23 @@ function PortfolioPage() {
         let backendToken = localStorage.getItem("backend_token");
 
         if (!backendToken) {
-          let privyToken: string | undefined;
+          let tempPrivyToken: string | null = null;
 
           for (let i = 0; i < 10; i++) {
             const t = await getAccessToken();
             if (t) {
-              privyToken = t;
+              tempPrivyToken = t;
               break;
             }
             await new Promise((r) => setTimeout(r, 300));
           }
 
-          if (!privyToken) {
+          if (tempPrivyToken === null) {
             throw new Error("Privy token unavailable");
           }
+
+          // ✅ HARD PROMOTION (TS SAFE)
+          const privyToken: string = tempPrivyToken;
 
           const authRes = await fetch(
             "https://predix-backend.onrender.com/auth/privy",
@@ -169,10 +171,7 @@ function PortfolioPage() {
       {!loading && portfolio.length === 0 && <p>No positions yet.</p>}
 
       {portfolio.map((p) => (
-        <pre
-          key={p.id}
-          style={{ background: "#111", color: "#0f0", padding: 10 }}
-        >
+        <pre key={p.id} style={{ background: "#111", color: "#0f0", padding: 10 }}>
           {JSON.stringify(p, null, 2)}
         </pre>
       ))}
@@ -181,8 +180,7 @@ function PortfolioPage() {
         ➕ Add Test Position
       </button>
 
-      <br />
-      <br />
+      <br /><br />
 
       <button
         onClick={() => {
