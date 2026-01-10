@@ -17,18 +17,16 @@ app.use(cors());
 app.use(express.json());
 
 /* ===============================
-   ENV CHECK (REQUIRED)
+   ENV CHECK
 ================================ */
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL missing");
   process.exit(1);
 }
-
 if (!process.env.BACKEND_JWT_SECRET) {
   console.error("BACKEND_JWT_SECRET missing");
   process.exit(1);
 }
-
 if (!process.env.PRIVY_APP_ID || !process.env.PRIVY_APP_SECRET) {
   console.error("PRIVY_APP_ID or PRIVY_APP_SECRET missing");
   process.exit(1);
@@ -46,7 +44,7 @@ const pool = new Pool({
 });
 
 /* ===============================
-   Privy Client
+   Privy
 ================================ */
 const privy = new PrivyClient(
   process.env.PRIVY_APP_ID,
@@ -111,7 +109,7 @@ async function migrate() {
 await migrate();
 
 /* ===============================
-   🔐 Privy → Backend Auth Exchange
+   Auth
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
@@ -120,8 +118,9 @@ app.post("/auth/privy", async (req, res) => {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
-    const privyToken = auth.replace("Bearer ", "");
-    const verified = await privy.verifyAuthToken(privyToken);
+    const verified = await privy.verifyAuthToken(
+      auth.replace("Bearer ", "")
+    );
 
     const { rows } = await pool.query(
       `
@@ -140,22 +139,13 @@ app.post("/auth/privy", async (req, res) => {
       ]
     );
 
-    const user = rows[0];
-
-    const backendToken = jwt.sign(
-      { uid: user.id },
+    const token = jwt.sign(
+      { uid: rows[0].id },
       process.env.BACKEND_JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    res.json({
-      token: backendToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        wallet: user.wallet_address,
-      },
-    });
+    res.json({ token });
   } catch (err) {
     console.error("Backend auth failed:", err);
     res.status(401).json({ error: "Backend auth failed" });
@@ -163,7 +153,7 @@ app.post("/auth/privy", async (req, res) => {
 });
 
 /* ===============================
-   🔒 Backend JWT Guard
+   JWT Guard
 ================================ */
 function requireBackendAuth(req, res, next) {
   try {
@@ -171,11 +161,10 @@ function requireBackendAuth(req, res, next) {
     if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
-
-    const token = auth.replace("Bearer ", "");
-    const payload = jwt.verify(token, process.env.BACKEND_JWT_SECRET);
-
-    req.userId = payload.uid;
+    req.userId = jwt.verify(
+      auth.replace("Bearer ", ""),
+      process.env.BACKEND_JWT_SECRET
+    ).uid;
     next();
   } catch {
     res.status(401).json({ error: "Invalid backend token" });
@@ -183,41 +172,7 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   GET /me
-================================ */
-app.get("/me", requireBackendAuth, async (req, res) => {
-  const { rows } = await pool.query(
-    "SELECT id, email, wallet_address FROM users WHERE id = $1",
-    [req.userId]
-  );
-
-  res.json({ user: rows[0] });
-});
-
-/* ===============================
-   POST /portfolio
-================================ */
-app.post("/portfolio", requireBackendAuth, async (req, res) => {
-  const { market_id, outcome, shares, avg_price } = req.body;
-
-  if (!market_id || !outcome || !shares || !avg_price) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
-
-  const { rows } = await pool.query(
-    `
-    INSERT INTO portfolios (user_id, market_id, outcome, shares, avg_price)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING *;
-    `,
-    [req.userId, market_id, outcome, shares, avg_price]
-  );
-
-  res.json({ position: rows[0] });
-});
-
-/* ===============================
-   GET /portfolio
+   Portfolio
 ================================ */
 app.get("/portfolio", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
@@ -229,41 +184,50 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
     `,
     [req.userId]
   );
-
   res.json({ portfolio: rows });
 });
 
 /* ===============================
-   🌐 Polymarket READ-ONLY Fetch
+   🌐 Polymarket — LONG TERM RESOLVER
 ================================ */
-app.get("/polymarket/market/:marketId", async (req, res) => {
+app.get("/polymarket/market/:slug", async (req, res) => {
   try {
-    const { marketId } = req.params;
+    const { slug } = req.params;
 
     const response = await fetch(
-      `https://clob.polymarket.com/markets/${marketId}`
+      `https://polymarket.com/api/event/${slug}`
     );
 
     if (!response.ok) {
-      return res
-        .status(404)
-        .json({ error: "Polymarket market not found" });
+      return res.status(404).json({ error: "Market not found" });
     }
 
-    const market = await response.json();
+    const event = await response.json();
+
+    if (event.resolved) {
+      return res.status(400).json({ error: "Market already resolved" });
+    }
+
+    const endTime = new Date(event.endDate);
+    const now = new Date();
+    const daysLeft =
+      (endTime.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+
+    if (daysLeft < 3) {
+      return res
+        .status(400)
+        .json({ error: "Market too short-term for portfolio" });
+    }
 
     res.json({
-      market_id: market.id,
-      question: market.question,
-      resolved: market.resolved,
-      outcomes: market.outcomes?.map((o) => ({
-        name: o.name,
-        price: o.price,
-      })),
+      slug,
+      question: event.title,
+      endDate: event.endDate,
+      outcomes: event.markets?.[0]?.outcomes ?? [],
     });
   } catch (err) {
-    console.error("Polymarket fetch failed:", err);
-    res.status(500).json({ error: "Polymarket fetch failed" });
+    console.error("Polymarket resolver failed:", err);
+    res.status(500).json({ error: "Polymarket resolver failed" });
   }
 });
 
