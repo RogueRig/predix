@@ -56,7 +56,8 @@ function PortfolioPage() {
       try {
         setLoading(true);
 
-        let backendToken = localStorage.getItem("backend_token");
+        let backendToken: string | null =
+          localStorage.getItem("backend_token");
 
         if (!backendToken) {
           let tempPrivyToken: string | null = null;
@@ -74,7 +75,6 @@ function PortfolioPage() {
             throw new Error("Privy token unavailable");
           }
 
-          // ✅ HARD PROMOTION (TS SAFE)
           const privyToken: string = tempPrivyToken;
 
           const authRes = await fetch(
@@ -87,17 +87,18 @@ function PortfolioPage() {
             }
           );
 
-          const authJson = await authRes.json();
+          const authJson: { token?: string } = await authRes.json();
 
           if (!authRes.ok || !authJson.token) {
             throw new Error("Backend auth failed");
           }
 
           backendToken = authJson.token;
-          localStorage.setItem("backend_token", backendToken);
+          localStorage.setItem("backend_token", authJson.token);
         }
 
-        if (typeof backendToken !== "string") {
+        // 🔒 HARD TS GUARANTEE
+        if (backendToken === null) {
           throw new Error("Backend token missing");
         }
 
@@ -132,7 +133,7 @@ function PortfolioPage() {
 
   async function addTestPosition() {
     const stored = localStorage.getItem("backend_token");
-    if (typeof stored !== "string") return;
+    if (stored === null) return;
 
     const authToken: string = stored;
 
@@ -171,7 +172,10 @@ function PortfolioPage() {
       {!loading && portfolio.length === 0 && <p>No positions yet.</p>}
 
       {portfolio.map((p) => (
-        <pre key={p.id} style={{ background: "#111", color: "#0f0", padding: 10 }}>
+        <pre
+          key={p.id}
+          style={{ background: "#111", color: "#0f0", padding: 10 }}
+        >
           {JSON.stringify(p, null, 2)}
         </pre>
       ))}
@@ -180,7 +184,8 @@ function PortfolioPage() {
         ➕ Add Test Position
       </button>
 
-      <br /><br />
+      <br />
+      <br />
 
       <button
         onClick={() => {
