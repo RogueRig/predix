@@ -49,12 +49,14 @@ function LoginPage() {
   );
 }
 
+/* ===============================
+   📊 Portfolio Page (STABLE)
+================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
   const [output, setOutput] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
-  const backendTokenRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -66,43 +68,49 @@ function PortfolioPage() {
       setOutput(null);
 
       try {
-        // 1️⃣ Get Privy token
-        let privyToken: string | null = null;
-        for (let i = 0; i < 10; i++) {
-          privyToken = await getAccessToken();
-          if (privyToken) break;
-          await new Promise((r) => setTimeout(r, 300));
-        }
+        // 1️⃣ Try existing backend token
+        let backendToken = localStorage.getItem("backend_token");
 
-        if (!privyToken) {
-          throw new Error("Privy token unavailable");
-        }
+        // 2️⃣ If missing → exchange Privy token
+        if (!backendToken) {
+          let privyToken: string | null = null;
 
-        // 2️⃣ Exchange for backend JWT
-        const authRes = await fetch(
-          "https://predix-backend.onrender.com/auth/privy",
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${privyToken}`,
-            },
+          for (let i = 0; i < 10; i++) {
+            privyToken = await getAccessToken();
+            if (privyToken) break;
+            await new Promise((r) => setTimeout(r, 300));
           }
-        );
 
-        const authJson = await authRes.json();
+          if (!privyToken) {
+            throw new Error("Privy token unavailable");
+          }
 
-        if (!authRes.ok || !authJson.token) {
-          throw new Error("Backend auth failed");
+          const authRes = await fetch(
+            "https://predix-backend.onrender.com/auth/privy",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${privyToken}`,
+              },
+            }
+          );
+
+          const authJson = await authRes.json();
+
+          if (!authRes.ok || !authJson.token) {
+            throw new Error("Backend auth failed");
+          }
+
+          backendToken = authJson.token;
+          localStorage.setItem("backend_token", backendToken);
         }
 
-        backendTokenRef.current = authJson.token;
-
-        // 3️⃣ Call /me using BACKEND token
+        // 3️⃣ Call /me using BACKEND JWT
         const meRes = await fetch(
           "https://predix-backend.onrender.com/me",
           {
             headers: {
-              Authorization: `Bearer ${backendTokenRef.current}`,
+              Authorization: `Bearer ${backendToken}`,
             },
           }
         );
@@ -117,6 +125,7 @@ function PortfolioPage() {
           setOutput(meJson);
         }
       } catch (err: any) {
+        localStorage.removeItem("backend_token");
         if (!cancelled) {
           setOutput({ error: err.message });
         }
@@ -153,7 +162,10 @@ function PortfolioPage() {
 
       <div style={{ marginTop: 12 }}>
         <button
-          onClick={logout}
+          onClick={() => {
+            localStorage.removeItem("backend_token");
+            logout();
+          }}
           style={{ padding: 12, fontSize: 16 }}
         >
           Logout
