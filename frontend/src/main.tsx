@@ -10,7 +10,7 @@ import {
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 
 /* ===============================
-   🔐 Auth Guard
+   🔐 Auth Guard (Privy ONLY)
 ================================ */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { ready, authenticated } = usePrivy();
@@ -51,10 +51,10 @@ function LoginPage() {
 
 /* ===============================
    📊 Portfolio Page
+   (NO REDIRECTS HERE)
 ================================ */
 function PortfolioPage() {
   const { getAccessToken, logout } = usePrivy();
-  const navigate = useNavigate();
 
   const [user, setUser] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
@@ -66,7 +66,11 @@ function PortfolioPage() {
     async function loadProfile() {
       try {
         const token = await getAccessToken();
-        if (!token) throw new Error("No token");
+
+        // 🔑 Token may be temporarily null — DO NOT fail
+        if (!token) {
+          return;
+        }
 
         const res = await fetch(
           "https://predix-backend.onrender.com/me",
@@ -77,18 +81,24 @@ function PortfolioPage() {
           }
         );
 
-        if (!res.ok) throw new Error("Backend auth failed");
+        if (!res.ok) {
+          throw new Error("Backend auth failed");
+        }
 
         const data = await res.json();
-        if (!cancelled) setUser(data.user);
+        if (!cancelled) {
+          setUser(data.user);
+          setError(null);
+        }
       } catch (err) {
         console.error(err);
         if (!cancelled) {
-          setError("Session expired. Please login again.");
-          setTimeout(() => navigate("/"), 1500);
+          setError("Failed to load profile from backend.");
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
@@ -96,14 +106,21 @@ function PortfolioPage() {
     return () => {
       cancelled = true;
     };
-  }, [getAccessToken, navigate]);
+  }, [getAccessToken]);
 
   if (loading) {
     return <p style={{ padding: 20 }}>Loading your account…</p>;
   }
 
   if (error) {
-    return <p style={{ padding: 20, color: "red" }}>{error}</p>;
+    return (
+      <div style={{ padding: 20 }}>
+        <p style={{ color: "red" }}>{error}</p>
+        <button onClick={logout} style={{ padding: 12, fontSize: 16 }}>
+          Logout
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -155,7 +172,7 @@ function App() {
 }
 
 /* ===============================
-   🔌 Mount React (NO StrictMode)
+   🔌 Mount React
 ================================ */
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <PrivyProvider
