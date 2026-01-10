@@ -28,6 +28,11 @@ if (!process.env.BACKEND_JWT_SECRET) {
   process.exit(1);
 }
 
+if (!process.env.PRIVY_APP_ID || !process.env.PRIVY_APP_SECRET) {
+  console.error("PRIVY_APP_ID or PRIVY_APP_SECRET missing");
+  process.exit(1);
+}
+
 /* ===============================
    Database
 ================================ */
@@ -61,6 +66,7 @@ async function ensureUsersSchema() {
     );
   `);
 }
+
 await ensureUsersSchema();
 
 /* ===============================
@@ -69,16 +75,16 @@ await ensureUsersSchema();
 app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
+    if (!auth || !auth.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
     const privyToken = auth.replace("Bearer ", "");
 
-    // 1️⃣ Verify Privy token
-    const verified = await privy.verifyAccessToken(privyToken);
+    // ✅ CORRECT: verify FRONTEND auth token
+    const verified = await privy.verifyAuthToken(privyToken);
 
-    // 2️⃣ Upsert user
+    // Upsert user
     const { rows } = await pool.query(
       `
       INSERT INTO users (privy_user_id, email, wallet_address)
@@ -98,14 +104,14 @@ app.post("/auth/privy", async (req, res) => {
 
     const user = rows[0];
 
-    // 3️⃣ Issue BACKEND JWT
+    // Issue backend JWT
     const backendToken = jwt.sign(
       { uid: user.id },
       process.env.BACKEND_JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    res.json({
+    return res.json({
       token: backendToken,
       user: {
         id: user.id,
@@ -114,8 +120,8 @@ app.post("/auth/privy", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("Backend auth failed:", err.message);
-    res.status(401).json({ error: "Backend auth failed" });
+    console.error("Backend auth failed:", err);
+    return res.status(401).json({ error: "Backend auth failed" });
   }
 });
 
@@ -125,7 +131,7 @@ app.post("/auth/privy", async (req, res) => {
 function requireBackendAuth(req, res, next) {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
+    if (!auth || !auth.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -135,7 +141,7 @@ function requireBackendAuth(req, res, next) {
     req.userId = payload.uid;
     next();
   } catch {
-    res.status(401).json({ error: "Invalid backend token" });
+    return res.status(401).json({ error: "Invalid backend token" });
   }
 }
 
@@ -148,7 +154,7 @@ app.get("/me", requireBackendAuth, async (req, res) => {
     [req.userId]
   );
 
-  res.json({ user: rows[0] });
+  return res.json({ user: rows[0] });
 });
 
 /* ===============================
