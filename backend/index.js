@@ -188,53 +188,56 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   🌐 Polymarket TOP MARKETS (CLOB-FIRST ✅)
+   🌐 Polymarket TOP MARKETS (Gamma → CLOB ✅)
    GET /polymarket/top
 ================================ */
 app.get("/polymarket/top", async (_req, res) => {
   try {
-    // 1️⃣ Fetch active markets directly from CLOB
-    const clobRes = await fetch(
-      "https://clob.polymarket.com/markets?active=true&limit=50"
+    const now = Date.now();
+
+    // 1️⃣ Discover via Gamma (sorted by volume)
+    const gammaRes = await fetch(
+      "https://gamma-api.polymarket.com/events?order=volume&direction=desc"
     );
 
-    if (!clobRes.ok) {
-      return res.status(502).json({ error: "CLOB unavailable" });
+    if (!gammaRes.ok) {
+      return res.status(502).json({ error: "Gamma unavailable" });
     }
 
-    const clobJson = await clobRes.json();
-    const clobMarkets = clobJson?.markets ?? [];
+    const gammaJson = await gammaRes.json();
+    const events = gammaJson?.data ?? [];
 
-    // 2️⃣ Sort by liquidity (best proxy for volume)
-    const top = clobMarkets
-      .filter((m) => !m.resolved)
-      .sort((a, b) => Number(b.liquidity) - Number(a.liquidity))
+    // 2️⃣ Filter long-term, unresolved markets
+    const selected = events
+      .filter(
+        (e) =>
+          !e.resolved &&
+          e.endDate &&
+          new Date(e.endDate).getTime() - now >= 7 * 24 * 60 * 60 * 1000 &&
+          e.markets?.length
+      )
       .slice(0, 20);
 
-    const results = [];
+    const markets = [];
 
-    // 3️⃣ Enrich with Gamma event metadata
-    for (const m of top) {
-      let question = null;
-      let endDate = null;
+    // 3️⃣ Fetch prices from CLOB
+    for (const e of selected) {
+      const marketId = e.markets[0].id;
 
-      if (m.event_id) {
-        const eventRes = await fetch(
-          `https://gamma-api.polymarket.com/events/${m.event_id}`
-        );
+      const mRes = await fetch(
+        `https://clob.polymarket.com/markets/${marketId}`
+      );
 
-        if (eventRes.ok) {
-          const e = await eventRes.json();
-          question = e?.title ?? null;
-          endDate = e?.endDate ?? null;
-        }
-      }
+      if (!mRes.ok) continue;
 
-      results.push({
-        market_id: m.id,
-        question,
-        endDate,
-        liquidity: m.liquidity,
+      const m = await mRes.json();
+
+      markets.push({
+        event_id: e.id,
+        market_id: marketId,
+        question: e.title,
+        endDate: e.endDate,
+        volume: e.volume || 0,
         outcomes: m.outcomes?.map((o) => ({
           name: o.name,
           price: o.price,
@@ -243,7 +246,7 @@ app.get("/polymarket/top", async (_req, res) => {
     }
 
     res.json({
-      markets: results,
+      markets,
       asOf: new Date().toISOString(),
     });
   } catch (err) {
