@@ -48,7 +48,6 @@ function PortfolioPage() {
   const [portfolio, setPortfolio] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
 
-  /* ---------- Bootstrap session ---------- */
   React.useEffect(() => {
     let cancelled = false;
 
@@ -72,7 +71,9 @@ function PortfolioPage() {
             await new Promise((r) => setTimeout(r, 300));
           }
 
-          if (!privyToken) throw new Error("Privy token unavailable");
+          if (!privyToken) {
+            throw new Error("Privy token unavailable");
+          }
 
           const res = await fetch(
             "https://predix-backend.onrender.com/auth/privy",
@@ -85,6 +86,7 @@ function PortfolioPage() {
           );
 
           const json = await res.json();
+
           if (!res.ok || !json.token) {
             throw new Error("Backend auth failed");
           }
@@ -93,16 +95,19 @@ function PortfolioPage() {
           localStorage.setItem("backend_token", backendToken);
         }
 
-        // ✅ HARD GUARANTEE FOR TYPESCRIPT
         if (typeof backendToken !== "string") {
           throw new Error("Backend token missing");
         }
 
-        /* ---------- Load portfolio ---------- */
+        // ✅ CRITICAL: promote to new constant for TypeScript
+        const authToken: string = backendToken;
+
         const pRes = await fetch(
           "https://predix-backend.onrender.com/portfolio",
           {
-            headers: { Authorization: `Bearer ${backendToken}` },
+            headers: {
+              Authorization: `Bearer ${authToken}`,
+            },
           }
         );
 
@@ -124,16 +129,17 @@ function PortfolioPage() {
     };
   }, [ready, authenticated, getAccessToken]);
 
-  /* ---------- Add test position ---------- */
   async function addTestPosition() {
     const backendToken = localStorage.getItem("backend_token");
     if (typeof backendToken !== "string") return;
+
+    const authToken: string = backendToken;
 
     await fetch("https://predix-backend.onrender.com/portfolio", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${backendToken}`,
+        Authorization: `Bearer ${authToken}`,
       },
       body: JSON.stringify({
         market_id: "btc-2025",
@@ -146,7 +152,9 @@ function PortfolioPage() {
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio",
       {
-        headers: { Authorization: `Bearer ${backendToken}` },
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
       }
     );
 
@@ -159,7 +167,6 @@ function PortfolioPage() {
       <h1>Portfolio</h1>
 
       {loading && <p>Loading…</p>}
-
       {!loading && portfolio.length === 0 && <p>No positions yet.</p>}
 
       {portfolio.map((p) => (
