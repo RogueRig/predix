@@ -3,6 +3,7 @@ import cors from "cors";
 import jwt from "jsonwebtoken";
 import { PrivyClient } from "@privy-io/server-auth";
 import pkg from "pg";
+import fetch from "node-fetch";
 
 const { Pool } = pkg;
 
@@ -194,7 +195,7 @@ app.get("/me", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   POST /portfolio  ✅ NEW
+   POST /portfolio
 ================================ */
 app.post("/portfolio", requireBackendAuth, async (req, res) => {
   const { market_id, outcome, shares, avg_price } = req.body;
@@ -230,6 +231,40 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
   );
 
   res.json({ portfolio: rows });
+});
+
+/* ===============================
+   🌐 Polymarket READ-ONLY Fetch
+================================ */
+app.get("/polymarket/market/:marketId", async (req, res) => {
+  try {
+    const { marketId } = req.params;
+
+    const response = await fetch(
+      `https://clob.polymarket.com/markets/${marketId}`
+    );
+
+    if (!response.ok) {
+      return res
+        .status(404)
+        .json({ error: "Polymarket market not found" });
+    }
+
+    const market = await response.json();
+
+    res.json({
+      market_id: market.id,
+      question: market.question,
+      resolved: market.resolved,
+      outcomes: market.outcomes?.map((o) => ({
+        name: o.name,
+        price: o.price,
+      })),
+    });
+  } catch (err) {
+    console.error("Polymarket fetch failed:", err);
+    res.status(500).json({ error: "Polymarket fetch failed" });
+  }
 });
 
 /* ===============================
