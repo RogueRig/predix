@@ -75,7 +75,7 @@ function PortfolioPage() {
             throw new Error("Privy token unavailable");
           }
 
-          const res = await fetch(
+          const authRes = await fetch(
             "https://predix-backend.onrender.com/auth/privy",
             {
               method: "POST",
@@ -85,13 +85,13 @@ function PortfolioPage() {
             }
           );
 
-          const json = await res.json();
+          const authJson = await authRes.json();
 
-          if (!res.ok || !json.token) {
+          if (!authRes.ok || !authJson.token) {
             throw new Error("Backend auth failed");
           }
 
-          backendToken = json.token;
+          backendToken = authJson.token;
           localStorage.setItem("backend_token", backendToken);
         }
 
@@ -99,7 +99,6 @@ function PortfolioPage() {
           throw new Error("Backend token missing");
         }
 
-        // ✅ CRITICAL: promote to new constant for TypeScript
         const authToken: string = backendToken;
 
         const pRes = await fetch(
@@ -130,10 +129,10 @@ function PortfolioPage() {
   }, [ready, authenticated, getAccessToken]);
 
   async function addTestPosition() {
-    const backendToken = localStorage.getItem("backend_token");
-    if (typeof backendToken !== "string") return;
+    const stored = localStorage.getItem("backend_token");
+    if (typeof stored !== "string") return;
 
-    const authToken: string = backendToken;
+    const authToken: string = stored;
 
     await fetch("https://predix-backend.onrender.com/portfolio", {
       method: "POST",
