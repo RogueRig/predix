@@ -18,7 +18,7 @@ app.use(express.json());
    Database
 ================================ */
 if (!process.env.DATABASE_URL) {
-  console.error("❌ DATABASE_URL missing");
+  console.error("DATABASE_URL missing");
   process.exit(1);
 }
 
@@ -37,14 +37,14 @@ const PRIVY_APP_ID = process.env.PRIVY_APP_ID;
 const PRIVY_APP_SECRET = process.env.PRIVY_APP_SECRET;
 
 if (!PRIVY_APP_ID || !PRIVY_APP_SECRET) {
-  console.error("❌ PRIVY_APP_ID or PRIVY_APP_SECRET missing");
+  console.error("PRIVY_APP_ID or PRIVY_APP_SECRET missing");
   process.exit(1);
 }
 
 const privy = new PrivyClient(PRIVY_APP_ID, PRIVY_APP_SECRET);
 
 /* ===============================
-   🔧 DB Migration (BLOCKING)
+   DB Migration (BLOCKING)
 ================================ */
 async function ensureUsersSchema() {
   await pool.query(`
@@ -65,9 +65,9 @@ async function ensureUsersSchema() {
     );
 
     if (rows.length === 0) {
-      console.log(\`🛠 Adding missing column: \${name}\`);
-      await pool.query(\`ALTER TABLE users ADD COLUMN \${sql};\`);
-      console.log(\`✅ Column \${name} added\`);
+      console.log("Adding missing column:", name);
+      await pool.query("ALTER TABLE users ADD COLUMN " + sql + ";");
+      console.log("Column added:", name);
     }
   }
 
@@ -85,11 +85,11 @@ async function ensureUsersSchema() {
     ON users (privy_user_id);
   `);
 
-  console.log("✅ Users schema fully ensured");
+  console.log("Users schema ensured");
 }
 
 /* ===============================
-   🔐 Privy Auth + DB User
+   Privy Auth + DB User
 ================================ */
 async function requirePrivyAuth(req, res, next) {
   try {
@@ -101,7 +101,7 @@ async function requirePrivyAuth(req, res, next) {
 
     const token = authHeader.replace("Bearer ", "");
 
-    // ✅ CORRECT METHOD FOR FRONTEND TOKENS
+    // IMPORTANT: frontend token verification
     const verified = await privy.verifyAccessToken(token);
 
     const privyUserId = verified.userId;
@@ -124,7 +124,7 @@ async function requirePrivyAuth(req, res, next) {
     req.user = rows[0];
     next();
   } catch (err) {
-    console.error("❌ Auth failed:", err.message);
+    console.error("Auth failed:", err.message);
     res.status(401).json({ error: "Invalid Privy token" });
   }
 }
@@ -141,20 +141,20 @@ app.get("/me", requirePrivyAuth, (req, res) => {
 });
 
 app.get("/", (_, res) => {
-  res.send("✅ Predix backend running");
+  res.send("Predix backend running");
 });
 
 /* ===============================
-   🚀 START SERVER (AFTER MIGRATION)
+   START SERVER AFTER MIGRATION
 ================================ */
 (async () => {
   try {
     await ensureUsersSchema();
     app.listen(PORT, () => {
-      console.log(`🚀 Predix backend listening on ${PORT}`);
+      console.log("Predix backend listening on", PORT);
     });
   } catch (err) {
-    console.error("❌ Startup failed:", err);
+    console.error("Startup failed:", err);
     process.exit(1);
   }
 })();
