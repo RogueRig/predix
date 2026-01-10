@@ -240,15 +240,14 @@ app.get("/polymarket/event", async (req, res) => {
 });
 
 /* ===============================
-   🌐 Polymarket TOP MARKETS (NEW)
-   GET /polymarket/top
+   🌐 Polymarket TOP MARKETS
 ================================ */
 app.get("/polymarket/top", async (_req, res) => {
   try {
     const now = Date.now();
 
     const eventsRes = await fetch(
-      "https://gamma-api.polymarket.com/events"
+      "https://gamma-api.polymarket.com/events?order=volume&direction=desc"
     );
 
     const eventsJson = await eventsRes.json();
@@ -262,7 +261,6 @@ app.get("/polymarket/top", async (_req, res) => {
           new Date(e.endDate).getTime() - now >= 7 * 24 * 60 * 60 * 1000 &&
           e.markets?.length
       )
-      .sort((a, b) => (b.volume || 0) - (a.volume || 0))
       .slice(0, 20);
 
     const markets = [];
