@@ -51,62 +51,59 @@ function LoginPage() {
 
 /* ===============================
    📊 Portfolio Page
-   (NO REDIRECTS HERE)
 ================================ */
 function PortfolioPage() {
-  const { getAccessToken, logout } = usePrivy();
+  const { ready, getAccessToken, logout } = usePrivy();
 
   const [user, setUser] = React.useState<any>(null);
-  const [loading, setLoading] = React.useState(true);
+  const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
-    let cancelled = false;
+  async function loadProfile() {
+    setLoading(true);
+    setError(null);
 
-    async function loadProfile() {
-      try {
-        const token = await getAccessToken();
-
-        // 🔑 Token may be temporarily null — DO NOT fail
-        if (!token) {
-          return;
-        }
-
-        const res = await fetch(
-          "https://predix-backend.onrender.com/me",
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
-
-        if (!res.ok) {
-          throw new Error("Backend auth failed");
-        }
-
-        const data = await res.json();
-        if (!cancelled) {
-          setUser(data.user);
-          setError(null);
-        }
-      } catch (err) {
-        console.error(err);
-        if (!cancelled) {
-          setError("Failed to load profile from backend.");
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+    try {
+      if (!ready) {
+        return;
       }
-    }
 
-    loadProfile();
-    return () => {
-      cancelled = true;
-    };
-  }, [getAccessToken]);
+      const token = await getAccessToken();
+
+      if (!token) {
+        throw new Error("Privy token not ready yet");
+      }
+
+      const res = await fetch(
+        "https://predix-backend.onrender.com/me",
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!res.ok) {
+        throw new Error("Backend auth failed");
+      }
+
+      const data = await res.json();
+      setUser(data.user);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to load profile from backend.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Load once when Privy becomes ready
+  React.useEffect(() => {
+    if (ready) {
+      loadProfile();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
   if (loading) {
     return <p style={{ padding: 20 }}>Loading your account…</p>;
@@ -116,11 +113,23 @@ function PortfolioPage() {
     return (
       <div style={{ padding: 20 }}>
         <p style={{ color: "red" }}>{error}</p>
+
+        <button
+          onClick={loadProfile}
+          style={{ padding: 12, fontSize: 16, marginRight: 10 }}
+        >
+          Retry loading profile
+        </button>
+
         <button onClick={logout} style={{ padding: 12, fontSize: 16 }}>
           Logout
         </button>
       </div>
     );
+  }
+
+  if (!user) {
+    return <p style={{ padding: 20 }}>Preparing your account…</p>;
   }
 
   return (
