@@ -18,8 +18,6 @@ app.use(express.json());
 /* ===============================
    ENV CHECK
 ================================ */
-console.log("🔐 PRIVY_APP_ID:", process.env.PRIVY_APP_ID);
-
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL missing");
   process.exit(1);
@@ -47,7 +45,7 @@ const pool = new Pool({
 });
 
 /* ===============================
-   Privy Client
+   Privy
 ================================ */
 const privy = new PrivyClient(
   process.env.PRIVY_APP_ID,
@@ -55,47 +53,44 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   DB Migration
+   DB MIGRATION (FIX UUID ISSUE)
 ================================ */
-await pool.query(`
-  CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    privy_user_id TEXT UNIQUE NOT NULL,
-    email TEXT,
-    wallet_address TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  );
-`);
+async function migrate() {
+  // 1️⃣ Enable UUID support
+  await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
+
+  // 2️⃣ Create users table correctly
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      privy_user_id TEXT UNIQUE NOT NULL,
+      email TEXT,
+      wallet_address TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  console.log("✅ Database schema verified");
+}
+
+await migrate();
 
 /* ===============================
-   🔐 Privy → Backend Exchange (DEBUG)
+   🔐 Privy → Backend Exchange
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
-    console.log("➡️ /auth/privy called");
-
-    if (!auth || !auth.startsWith("Bearer ")) {
-      console.error("❌ Missing Authorization header");
+    if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
     const privyToken = auth.replace("Bearer ", "");
 
-    console.log("🔑 Token length:", privyToken.length);
-    console.log("🔑 Token prefix:", privyToken.slice(0, 20));
+    // ✅ Correct verification
+    const verified = await privy.verifyAuthToken(privyToken);
 
-    let verified;
-    try {
-      verified = await privy.verifyAuthToken(privyToken);
-    } catch (e) {
-      console.error("❌ Privy verifyAuthToken failed");
-      console.error(e);
-      throw e;
-    }
-
-    console.log("✅ Privy verified:", verified);
-
+    // ✅ Upsert user (UUID now auto-generates correctly)
     const { rows } = await pool.query(
       `
       INSERT INTO users (privy_user_id, email, wallet_address)
@@ -115,21 +110,57 @@ app.post("/auth/privy", async (req, res) => {
 
     const user = rows[0];
 
+    // ✅ Issue backend JWT
     const backendToken = jwt.sign(
       { uid: user.id },
       process.env.BACKEND_JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    return res.json({
+    res.json({
       token: backendToken,
-      user,
+      user: {
+        id: user.id,
+        email: user.email,
+        wallet: user.wallet_address,
+      },
     });
   } catch (err) {
-    console.error("🔥 BACKEND AUTH FAILED");
-    console.error(err);
-    return res.status(401).json({ error: "Backend auth failed" });
+    console.error("❌ Backend auth failed:", err);
+    res.status(401).json({ error: "Backend auth failed" });
   }
+});
+
+/* ===============================
+   🔒 Backend JWT Guard
+================================ */
+function requireBackendAuth(req, res, next) {
+  try {
+    const auth = req.headers.authorization;
+    if (!auth?.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing Authorization header" });
+    }
+
+    const token = auth.replace("Bearer ", "");
+    const payload = jwt.verify(token, process.env.BACKEND_JWT_SECRET);
+
+    req.userId = payload.uid;
+    next();
+  } catch {
+    res.status(401).json({ error: "Invalid backend token" });
+  }
+}
+
+/* ===============================
+   /me
+================================ */
+app.get("/me", requireBackendAuth, async (req, res) => {
+  const { rows } = await pool.query(
+    "SELECT id, email, wallet_address FROM users WHERE id = $1",
+    [req.userId]
+  );
+
+  res.json({ user: rows[0] });
 });
 
 /* ===============================
