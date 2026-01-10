@@ -45,9 +45,6 @@ function LoginPage() {
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
-  const [backendToken, setBackendToken] = React.useState<string | null>(
-    localStorage.getItem("backend_token")
-  );
   const [portfolio, setPortfolio] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
 
@@ -61,9 +58,9 @@ function PortfolioPage() {
       try {
         setLoading(true);
 
-        let token = backendToken;
+        let backendToken = localStorage.getItem("backend_token");
 
-        if (!token) {
+        if (!backendToken) {
           let privyToken: string | undefined;
 
           for (let i = 0; i < 10; i++) {
@@ -92,18 +89,20 @@ function PortfolioPage() {
             throw new Error("Backend auth failed");
           }
 
-          token = json.token;
-          localStorage.setItem("backend_token", token);
-          setBackendToken(token);
+          backendToken = json.token;
+          localStorage.setItem("backend_token", backendToken);
         }
 
-        if (!token) throw new Error("Backend token missing");
+        // ✅ HARD GUARANTEE FOR TYPESCRIPT
+        if (typeof backendToken !== "string") {
+          throw new Error("Backend token missing");
+        }
 
-        // Load portfolio
+        /* ---------- Load portfolio ---------- */
         const pRes = await fetch(
           "https://predix-backend.onrender.com/portfolio",
           {
-            headers: { Authorization: `Bearer ${token}` },
+            headers: { Authorization: `Bearer ${backendToken}` },
           }
         );
 
@@ -111,7 +110,7 @@ function PortfolioPage() {
         if (!pRes.ok) throw new Error("Failed to load portfolio");
 
         if (!cancelled) setPortfolio(pJson.portfolio || []);
-      } catch (err) {
+      } catch {
         localStorage.removeItem("backend_token");
         if (!cancelled) setPortfolio([]);
       } finally {
@@ -127,7 +126,8 @@ function PortfolioPage() {
 
   /* ---------- Add test position ---------- */
   async function addTestPosition() {
-    if (!backendToken) return;
+    const backendToken = localStorage.getItem("backend_token");
+    if (typeof backendToken !== "string") return;
 
     await fetch("https://predix-backend.onrender.com/portfolio", {
       method: "POST",
@@ -143,13 +143,13 @@ function PortfolioPage() {
       }),
     });
 
-    // Reload portfolio
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio",
       {
         headers: { Authorization: `Bearer ${backendToken}` },
       }
     );
+
     const json = await res.json();
     setPortfolio(json.portfolio || []);
   }
@@ -160,9 +160,7 @@ function PortfolioPage() {
 
       {loading && <p>Loading…</p>}
 
-      {!loading && portfolio.length === 0 && (
-        <p>No positions yet.</p>
-      )}
+      {!loading && portfolio.length === 0 && <p>No positions yet.</p>}
 
       {portfolio.map((p) => (
         <pre
