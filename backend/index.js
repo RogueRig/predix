@@ -62,6 +62,7 @@ async function migrate() {
       privy_user_id TEXT UNIQUE NOT NULL,
       email TEXT,
       wallet_address TEXT,
+      balance NUMERIC NOT NULL DEFAULT 1000,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
@@ -76,6 +77,12 @@ async function migrate() {
     ALTER TABLE users
     ALTER COLUMN id SET DEFAULT gen_random_uuid(),
     ALTER COLUMN id SET NOT NULL;
+  `);
+
+  await pool.query(`
+    UPDATE users
+    SET balance = 1000
+    WHERE balance IS NULL;
   `);
 
   await pool.query(`
@@ -186,6 +193,18 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
   );
 
   res.json({ portfolio: rows });
+});
+
+/* ===============================
+   Portfolio Meta (Balance)
+================================ */
+app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT balance FROM users WHERE id = $1`,
+    [req.userId]
+  );
+
+  res.json({ balance: rows[0].balance });
 });
 
 /* ===============================
