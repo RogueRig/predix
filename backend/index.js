@@ -3,7 +3,6 @@ import cors from "cors";
 import jwt from "jsonwebtoken";
 import { PrivyClient } from "@privy-io/server-auth";
 import pkg from "pg";
-import fetch from "node-fetch";
 
 const { Pool } = pkg;
 
@@ -187,50 +186,6 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
   );
 
   res.json({ portfolio: rows });
-});
-
-/* ===============================
-   🌐 Polymarket TOP MARKETS (CLOB — FIXED ✅)
-   GET /polymarket/clob-top
-================================ */
-app.get("/polymarket/clob-top", async (_req, res) => {
-  try {
-    const r = await fetch(
-      "https://clob.polymarket.com/markets?active=true&limit=50"
-    );
-
-    if (!r.ok) {
-      return res.status(502).json({ error: "CLOB unavailable" });
-    }
-
-    const j = await r.json();
-
-    // ✅ CORRECT SHAPE
-    const markets = j.markets ?? [];
-
-    const top = markets
-      .filter((m) => !m.resolved)
-      .sort((a, b) => Number(b.liquidity) - Number(a.liquidity))
-      .slice(0, 20)
-      .map((m) => ({
-        market_id: m.id,
-        liquidity: m.liquidity,
-        resolved: m.resolved,
-        outcomes: m.outcomes?.map((o) => ({
-          name: o.name,
-          price: o.price,
-        })),
-        polymarket_url: `https://polymarket.com/market/${m.id}`,
-      }));
-
-    res.json({
-      markets: top,
-      asOf: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error("CLOB top failed:", err);
-    res.status(500).json({ error: "CLOB top failed" });
-  }
 });
 
 /* ===============================
