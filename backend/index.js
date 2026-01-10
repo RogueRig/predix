@@ -188,99 +188,53 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   🌐 Polymarket EVENT (existing)
-================================ */
-app.get("/polymarket/event", async (req, res) => {
-  try {
-    const { slug } = req.query;
-    if (!slug) {
-      return res.status(400).json({ error: "slug is required" });
-    }
-
-    const eventRes = await fetch(
-      `https://gamma-api.polymarket.com/events?slug=${encodeURIComponent(
-        slug
-      )}`
-    );
-
-    const eventJson = await eventRes.json();
-    const event = eventJson?.data?.[0];
-
-    if (!event || !event.markets?.length) {
-      return res.status(404).json({ error: "Event not found" });
-    }
-
-    const marketId = event.markets[0].id;
-
-    const marketRes = await fetch(
-      `https://clob.polymarket.com/markets/${marketId}`
-    );
-
-    if (!marketRes.ok) {
-      return res.status(404).json({ error: "Market not found" });
-    }
-
-    const market = await marketRes.json();
-
-    res.json({
-      slug: event.slug,
-      question: event.title,
-      endDate: event.endDate,
-      resolved: event.resolved,
-      market_id: marketId,
-      outcomes: market.outcomes?.map((o) => ({
-        name: o.name,
-        price: o.price,
-      })),
-    });
-  } catch (err) {
-    console.error("Polymarket event fetch failed:", err);
-    res.status(500).json({ error: "Polymarket event fetch failed" });
-  }
-});
-
-/* ===============================
-   🌐 Polymarket TOP MARKETS
+   🌐 Polymarket TOP MARKETS (CLOB-FIRST ✅)
+   GET /polymarket/top
 ================================ */
 app.get("/polymarket/top", async (_req, res) => {
   try {
-    const now = Date.now();
-
-    const eventsRes = await fetch(
-      "https://gamma-api.polymarket.com/events?order=volume&direction=desc"
+    // 1️⃣ Fetch active markets directly from CLOB
+    const clobRes = await fetch(
+      "https://clob.polymarket.com/markets?active=true&limit=50"
     );
 
-    const eventsJson = await eventsRes.json();
-    const events = eventsJson?.data ?? [];
+    if (!clobRes.ok) {
+      return res.status(502).json({ error: "CLOB unavailable" });
+    }
 
-    const filtered = events
-      .filter(
-        (e) =>
-          !e.resolved &&
-          e.endDate &&
-          new Date(e.endDate).getTime() - now >= 7 * 24 * 60 * 60 * 1000 &&
-          e.markets?.length
-      )
+    const clobJson = await clobRes.json();
+    const clobMarkets = clobJson?.markets ?? [];
+
+    // 2️⃣ Sort by liquidity (best proxy for volume)
+    const top = clobMarkets
+      .filter((m) => !m.resolved)
+      .sort((a, b) => Number(b.liquidity) - Number(a.liquidity))
       .slice(0, 20);
 
-    const markets = [];
+    const results = [];
 
-    for (const e of filtered) {
-      const marketId = e.markets[0].id;
+    // 3️⃣ Enrich with Gamma event metadata
+    for (const m of top) {
+      let question = null;
+      let endDate = null;
 
-      const mRes = await fetch(
-        `https://clob.polymarket.com/markets/${marketId}`
-      );
-      if (!mRes.ok) continue;
+      if (m.event_id) {
+        const eventRes = await fetch(
+          `https://gamma-api.polymarket.com/events/${m.event_id}`
+        );
 
-      const m = await mRes.json();
+        if (eventRes.ok) {
+          const e = await eventRes.json();
+          question = e?.title ?? null;
+          endDate = e?.endDate ?? null;
+        }
+      }
 
-      markets.push({
-        event_id: e.id,
-        market_id: marketId,
-        question: e.title,
-        endDate: e.endDate,
-        volume: e.volume || 0,
+      results.push({
+        market_id: m.id,
+        question,
+        endDate,
+        liquidity: m.liquidity,
         outcomes: m.outcomes?.map((o) => ({
           name: o.name,
           price: o.price,
@@ -289,12 +243,12 @@ app.get("/polymarket/top", async (_req, res) => {
     }
 
     res.json({
-      markets,
+      markets: results,
       asOf: new Date().toISOString(),
     });
   } catch (err) {
     console.error("Polymarket top failed:", err);
-    res.status(502).json({ error: "Polymarket unavailable" });
+    res.status(500).json({ error: "Polymarket top failed" });
   }
 });
 
