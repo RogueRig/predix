@@ -51,55 +51,30 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Database Migration (SAFE & IDEMPOTENT)
+   Database Migration (BULLETPROOF)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 
+  // USERS
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id UUID,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       privy_user_id TEXT UNIQUE NOT NULL,
       email TEXT,
       wallet_address TEXT,
+      balance NUMERIC NOT NULL DEFAULT 1000,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
 
-  await pool.query(`
-    UPDATE users
-    SET id = gen_random_uuid()
-    WHERE id IS NULL;
-  `);
-
-  await pool.query(`
-    ALTER TABLE users
-    ALTER COLUMN id SET DEFAULT gen_random_uuid(),
-    ALTER COLUMN id SET NOT NULL;
-  `);
-
+  // Ensure balance always exists
   await pool.query(`
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS balance NUMERIC NOT NULL DEFAULT 1000;
   `);
 
-  await pool.query(`
-    UPDATE users
-    SET balance = 1000
-    WHERE balance IS NULL;
-  `);
-
-  await pool.query(`
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'users_pkey'
-      ) THEN
-        ALTER TABLE users ADD PRIMARY KEY (id);
-      END IF;
-    END$$;
-  `);
-
+  // PORTFOLIO
   await pool.query(`
     CREATE TABLE IF NOT EXISTS portfolios (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -123,7 +98,7 @@ await migrate();
 app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
+    if (!auth || !auth.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -156,7 +131,7 @@ app.post("/auth/privy", async (req, res) => {
 
     res.json({ token });
   } catch (err) {
-    console.error("Backend auth failed:", err);
+    console.error("Auth failed:", err);
     res.status(401).json({ error: "Backend auth failed" });
   }
 });
@@ -167,15 +142,16 @@ app.post("/auth/privy", async (req, res) => {
 function requireBackendAuth(req, res, next) {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
+    if (!auth || !auth.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
-    req.userId = jwt.verify(
+    const decoded = jwt.verify(
       auth.replace("Bearer ", ""),
       process.env.BACKEND_JWT_SECRET
-    ).uid;
+    );
 
+    req.userId = decoded.uid;
     next();
   } catch {
     res.status(401).json({ error: "Invalid backend token" });
@@ -188,7 +164,7 @@ function requireBackendAuth(req, res, next) {
 app.get("/portfolio", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `
-    SELECT id, market_id, outcome, shares, avg_price, created_at
+    SELECT market_id, outcome, shares, avg_price, created_at
     FROM portfolios
     WHERE user_id = $1
     ORDER BY created_at DESC;
@@ -208,68 +184,63 @@ app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
     [req.userId]
   );
 
-  res.json({ balance: rows[0].balance });
+  res.json({ balance: Number(rows[0].balance) });
 });
 
 /* ===============================
-   Paper Trade BUY (NEW ✅)
+   Paper Trade BUY
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
-  const { market_id, outcome, shares, price } = req.body;
+  const { marketId, outcome, shares, price } = req.body;
 
-  if (
-    typeof market_id !== "string" ||
-    typeof outcome !== "string" ||
-    typeof shares !== "number" ||
-    typeof price !== "number" ||
-    shares <= 0 ||
-    price <= 0
-  ) {
-    return res.status(400).json({ error: "Invalid trade input" });
+  if (!marketId || !outcome || !shares || !price) {
+    return res.status(400).json({ error: "Invalid trade payload" });
   }
 
-  const cost = shares * price;
+  const cost = Number(shares) * Number(price);
 
-  const client = await pool.connect();
+  await pool.query("BEGIN");
+
   try {
-    await client.query("BEGIN");
-
-    const balanceRes = await client.query(
+    const balRes = await pool.query(
       `SELECT balance FROM users WHERE id = $1 FOR UPDATE`,
       [req.userId]
     );
 
-    const balance = Number(balanceRes.rows[0].balance);
+    const balance = Number(balRes.rows[0].balance);
 
     if (balance < cost) {
-      throw new Error("Insufficient balance");
+      await pool.query("ROLLBACK");
+      return res.status(400).json({ error: "Insufficient balance" });
     }
 
-    await client.query(
-      `UPDATE users SET balance = balance - $1 WHERE id = $2`,
+    await pool.query(
+      `
+      UPDATE users
+      SET balance = balance - $1
+      WHERE id = $2;
+      `,
       [cost, req.userId]
     );
 
-    const insertRes = await client.query(
+    await pool.query(
       `
       INSERT INTO portfolios (user_id, market_id, outcome, shares, avg_price)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING *;
+      VALUES ($1, $2, $3, $4, $5);
       `,
-      [req.userId, market_id, outcome, shares, price]
+      [req.userId, marketId, outcome, shares, price]
     );
 
-    await client.query("COMMIT");
+    await pool.query("COMMIT");
 
     res.json({
-      balance: balance - cost,
-      position: insertRes.rows[0],
+      success: true,
+      newBalance: Number(balance - cost),
     });
   } catch (err) {
-    await client.query("ROLLBACK");
-    res.status(400).json({ error: err.message });
-  } finally {
-    client.release();
+    await pool.query("ROLLBACK");
+    console.error("Trade failed:", err);
+    res.status(500).json({ error: "Trade failed" });
   }
 });
 
