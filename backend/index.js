@@ -44,7 +44,7 @@ const pool = new Pool({
 });
 
 /* ===============================
-   Privy
+   Privy Implementation
 ================================ */
 const privy = new PrivyClient(
   process.env.PRIVY_APP_ID,
