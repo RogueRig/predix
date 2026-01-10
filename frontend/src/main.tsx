@@ -3,7 +3,13 @@ import ReactDOM from "react-dom/client";
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 
 function App() {
-  const { login, authenticated, ready, getAccessToken, logout } = usePrivy();
+  const {
+    login,
+    authenticated,
+    ready,
+    getAccessToken,
+    logout,
+  } = usePrivy();
 
   if (!ready) {
     return <p>Loading Privy…</p>;
@@ -11,7 +17,13 @@ function App() {
 
   async function verifyBackendAuth() {
     try {
-      const token = await getAccessToken();
+      // ✅ FIX: Explicitly request Privy access token
+      const token = await getAccessToken({ audience: "privy" });
+
+      if (!token) {
+        alert("❌ No access token returned from Privy");
+        return;
+      }
 
       const res = await fetch(
         "https://predix-backend.onrender.com/auth/privy",
