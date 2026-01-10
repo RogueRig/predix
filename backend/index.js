@@ -16,7 +16,7 @@ app.use(cors());
 app.use(express.json());
 
 /* ===============================
-   ENV CHECK
+   ENV CHECK (REQUIRED)
 ================================ */
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL missing");
@@ -45,7 +45,7 @@ const pool = new Pool({
 });
 
 /* ===============================
-   Privy
+   Privy Client
 ================================ */
 const privy = new PrivyClient(
   process.env.PRIVY_APP_ID,
@@ -53,13 +53,14 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   🔧 CRITICAL DB MIGRATION
+   Database Migration (LOCKED)
+   Runs once on boot, safe to re-run
 ================================ */
 async function migrate() {
-  // 1️⃣ Enable UUID generation
+  // Enable UUID generation
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 
-  // 2️⃣ Ensure table exists (no schema assumptions)
+  // Ensure users table exists
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID,
@@ -70,41 +71,31 @@ async function migrate() {
     );
   `);
 
-  // 3️⃣ Backfill NULL ids (if any)
+  // Backfill missing IDs
   await pool.query(`
     UPDATE users
     SET id = gen_random_uuid()
     WHERE id IS NULL;
   `);
 
-  // 4️⃣ Set DEFAULT for future inserts
+  // Enforce defaults + constraints
   await pool.query(`
     ALTER TABLE users
-    ALTER COLUMN id SET DEFAULT gen_random_uuid();
+    ALTER COLUMN id SET DEFAULT gen_random_uuid(),
+    ALTER COLUMN id SET NOT NULL,
+    ALTER COLUMN privy_user_id SET NOT NULL;
   `);
 
-  // 5️⃣ Enforce NOT NULL + PK
-  await pool.query(`
-    ALTER TABLE users
-    ALTER COLUMN id SET NOT NULL;
-  `);
-
+  // Add primary key if missing
   await pool.query(`
     DO $$
     BEGIN
       IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'users_pkey'
+        SELECT 1 FROM pg_constraint WHERE conname = 'users_pkey'
       ) THEN
         ALTER TABLE users ADD PRIMARY KEY (id);
       END IF;
     END$$;
-  `);
-
-  // 6️⃣ Enforce privy_user_id NOT NULL
-  await pool.query(`
-    ALTER TABLE users
-    ALTER COLUMN privy_user_id SET NOT NULL;
   `);
 
   console.log("✅ Database migration complete");
@@ -113,7 +104,8 @@ async function migrate() {
 await migrate();
 
 /* ===============================
-   🔐 Privy → Backend Exchange
+   🔐 Privy → Backend Auth Exchange
+   Stable & production-ready
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
@@ -123,7 +115,6 @@ app.post("/auth/privy", async (req, res) => {
     }
 
     const privyToken = auth.replace("Bearer ", "");
-
     const verified = await privy.verifyAuthToken(privyToken);
 
     const { rows } = await pool.query(
@@ -160,7 +151,7 @@ app.post("/auth/privy", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("❌ Backend auth failed:", err);
+    console.error("Backend auth failed:", err);
     res.status(401).json({ error: "Backend auth failed" });
   }
 });
@@ -186,7 +177,7 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   /me
+   /me — Canonical User Endpoint
 ================================ */
 app.get("/me", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
@@ -198,14 +189,14 @@ app.get("/me", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Health
+   Health Check
 ================================ */
 app.get("/", (_, res) => {
   res.send("Predix backend running");
 });
 
 /* ===============================
-   Start
+   Start Server
 ================================ */
 app.listen(PORT, () => {
   console.log("🚀 Backend running on", PORT);
