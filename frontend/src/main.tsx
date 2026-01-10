@@ -68,7 +68,8 @@ function PortfolioPage() {
         return;
       }
 
-      const token = await getAccessToken();
+      // ✅ CRITICAL FIX: force fresh token
+      const token = await getAccessToken({ forceRefresh: true });
 
       if (!token) {
         setOutput({ error: "No access token returned from Privy" });
