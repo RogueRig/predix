@@ -97,7 +97,6 @@ function PortfolioPage() {
           localStorage.setItem("backend_token", authJson.token);
         }
 
-        // 🔒 HARD TS GUARANTEE
         if (backendToken === null) {
           throw new Error("Backend token missing");
         }
@@ -168,19 +167,31 @@ function PortfolioPage() {
     <div style={{ padding: 20 }}>
       <h1>Portfolio</h1>
 
-      {loading && <p>Loading…</p>}
-      {!loading && portfolio.length === 0 && <p>No positions yet.</p>}
+      {loading && <p>Loading portfolio…</p>}
+
+      {!loading && portfolio.length === 0 && (
+        <p>No positions yet. Add one to get started.</p>
+      )}
 
       {portfolio.map((p) => (
         <pre
           key={p.id}
-          style={{ background: "#111", color: "#0f0", padding: 10 }}
+          style={{
+            background: "#111",
+            color: "#0f0",
+            padding: 10,
+            marginBottom: 8,
+          }}
         >
           {JSON.stringify(p, null, 2)}
         </pre>
       ))}
 
-      <button onClick={addTestPosition} style={{ marginTop: 12 }}>
+      <button
+        onClick={addTestPosition}
+        disabled={loading}
+        style={{ marginTop: 12 }}
+      >
         ➕ Add Test Position
       </button>
 
