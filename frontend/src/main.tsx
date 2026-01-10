@@ -15,7 +15,10 @@ import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { ready, authenticated } = usePrivy();
 
-  if (!ready) return <p style={{ padding: 20 }}>Loading Privy…</p>;
+  if (!ready) {
+    return <p style={{ padding: 20 }}>Loading Privy…</p>;
+  }
+
   return authenticated ? <>{children}</> : <Navigate to="/" replace />;
 }
 
@@ -27,41 +30,50 @@ function LoginPage() {
   const navigate = useNavigate();
 
   React.useEffect(() => {
-    if (ready && authenticated) navigate("/portfolio");
+    if (ready && authenticated) {
+      navigate("/portfolio");
+    }
   }, [ready, authenticated, navigate]);
 
-  if (!ready) return <p style={{ padding: 20 }}>Loading Privy…</p>;
+  if (!ready) {
+    return <p style={{ padding: 20 }}>Loading Privy…</p>;
+  }
 
   return (
-    <div style={{ padding: 20 }}>
+    <div style={{ padding: 20, fontFamily: "system-ui" }}>
       <h1>Predix</h1>
-      <button onClick={login}>Login with Privy</button>
+      <button onClick={login} style={{ padding: 12, fontSize: 16 }}>
+        Login with Privy
+      </button>
     </div>
   );
 }
 
 /* ===============================
-   📊 Portfolio Page (TS-SAFE)
+   📊 Portfolio Page (TS SAFE)
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
+
   const [output, setOutput] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
     let cancelled = false;
 
-    async function bootstrap() {
+    async function bootstrapSession() {
       if (!ready || !authenticated) return;
 
       try {
         setLoading(true);
+        setOutput(null);
 
-        // 1️⃣ Load backend token
-        let backendToken = localStorage.getItem("backend_token");
+        // 1️⃣ Load backend token if already stored
+        let backendToken: string | null =
+          localStorage.getItem("backend_token");
 
-        // 2️⃣ Exchange Privy token if needed
-        if (!backendToken) {
+        // 2️⃣ If missing, exchange Privy token → backend JWT
+        if (backendToken === null) {
           let privyToken: string | null = null;
 
           for (let i = 0; i < 10; i++) {
@@ -74,12 +86,15 @@ function PortfolioPage() {
             throw new Error("Privy token unavailable");
           }
 
+          // ✅ PROMOTE TO NON-NULL (TS FIX)
+          const privyAccessToken: string = privyToken;
+
           const authRes = await fetch(
             "https://predix-backend.onrender.com/auth/privy",
             {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${privyToken}`,
+                Authorization: `Bearer ${privyAccessToken}`,
               },
             }
           );
@@ -94,48 +109,61 @@ function PortfolioPage() {
           localStorage.setItem("backend_token", backendToken);
         }
 
-        // ✅ HARD GUARD — TS & runtime safe
-        if (backendToken === null) {
-          throw new Error("Backend token missing");
-        }
+        // ✅ PROMOTE BACKEND TOKEN TO NON-NULL
+        const finalBackendToken: string = backendToken;
 
-        // 3️⃣ Call /me
+        // 3️⃣ Call /me using backend JWT
         const meRes = await fetch(
           "https://predix-backend.onrender.com/me",
           {
             headers: {
-              Authorization: `Bearer ${backendToken}`,
+              Authorization: `Bearer ${finalBackendToken}`,
             },
           }
         );
 
         const meJson = await meRes.json();
 
-        if (!meRes.ok) throw new Error("Failed to load profile");
+        if (!meRes.ok) {
+          throw new Error("Failed to load profile");
+        }
 
-        if (!cancelled) setOutput(meJson);
+        if (!cancelled) {
+          setOutput(meJson);
+        }
       } catch (err: any) {
         localStorage.removeItem("backend_token");
-        if (!cancelled) setOutput({ error: err.message });
+        if (!cancelled) {
+          setOutput({ error: err.message });
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
-    bootstrap();
+    bootstrapSession();
+
     return () => {
       cancelled = true;
     };
   }, [ready, authenticated, getAccessToken]);
 
   return (
-    <div style={{ padding: 20 }}>
-      <h1>Portfolio</h1>
+    <div style={{ padding: 20, fontFamily: "system-ui" }}>
+      <h1>Predix Portfolio</h1>
 
-      {loading && <p>Loading…</p>}
+      {loading && <p>Loading session…</p>}
 
       {output && (
-        <pre style={{ background: "#111", color: "#0f0", padding: 12 }}>
+        <pre
+          style={{
+            background: "#111",
+            color: "#0f0",
+            padding: 12,
+            overflowX: "auto",
+            fontSize: 13,
+          }}
+        >
           {JSON.stringify(output, null, 2)}
         </pre>
       )}
@@ -145,6 +173,7 @@ function PortfolioPage() {
           localStorage.removeItem("backend_token");
           logout();
         }}
+        style={{ padding: 12, fontSize: 16, marginTop: 12 }}
       >
         Logout
       </button>
@@ -175,7 +204,7 @@ function App() {
 }
 
 /* ===============================
-   🔌 Mount
+   🔌 Mount React
 ================================ */
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <PrivyProvider
