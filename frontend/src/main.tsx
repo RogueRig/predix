@@ -50,12 +50,6 @@ function PortfolioPage() {
   const [portfolio, setPortfolio] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState<boolean>(true);
 
-  /* ---------- market discovery state ---------- */
-  const [marketUrl, setMarketUrl] = React.useState<string>("");
-  const [markets, setMarkets] = React.useState<any[]>([]);
-  const [marketError, setMarketError] = React.useState<string | null>(null);
-  const [searching, setSearching] = React.useState<boolean>(false);
-
   React.useEffect(() => {
     let cancelled = false;
 
@@ -65,8 +59,7 @@ function PortfolioPage() {
       try {
         setLoading(true);
 
-        let backendToken: string | null =
-          localStorage.getItem("backend_token");
+        let backendToken = localStorage.getItem("backend_token");
 
         if (!backendToken) {
           let privyToken: string | null = null;
@@ -104,10 +97,6 @@ function PortfolioPage() {
           localStorage.setItem("backend_token", backendToken);
         }
 
-        if (!backendToken) {
-          throw new Error("Backend token missing");
-        }
-
         const pRes = await fetch(
           "https://predix-backend.onrender.com/portfolio",
           {
@@ -120,9 +109,7 @@ function PortfolioPage() {
         const pJson = await pRes.json();
         if (!pRes.ok) throw new Error("Failed to load portfolio");
 
-        if (!cancelled) {
-          setPortfolio(pJson.portfolio || []);
-        }
+        if (!cancelled) setPortfolio(pJson.portfolio || []);
       } catch {
         localStorage.removeItem("backend_token");
         if (!cancelled) setPortfolio([]);
@@ -137,124 +124,31 @@ function PortfolioPage() {
     };
   }, [ready, authenticated, getAccessToken]);
 
-  /* ---------- discover market ---------- */
-  async function discoverMarket() {
-    setMarkets([]);
-    setMarketError(null);
-    setSearching(true);
-
-    try {
-      const url = marketUrl.trim();
-
-      if (url.length === 0) {
-        throw new Error("Market URL is empty");
-      }
-
-      if (!url.includes("/event/")) {
-        throw new Error("Invalid Polymarket event URL");
-      }
-
-      const slug = url.split("/event/")[1]?.split("?")[0];
-
-      if (!slug || slug.length === 0) {
-        throw new Error("Could not extract event slug");
-      }
-
-      const res = await fetch(
-        `https://gamma-api.polymarket.com/events?slug=${encodeURIComponent(
-          slug
-        )}`
-      );
-
-      const json = await res.json();
-      const event = json?.data?.[0];
-
-      if (!event || !event.markets) {
-        throw new Error("Event not found on Polymarket");
-      }
-
-      setMarkets(event.markets);
-    } catch (err: any) {
-      setMarketError(err.message || "Market discovery failed");
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  /* ---------- totals ---------- */
-  const totalPositions = portfolio.length;
-  const totalShares = portfolio.reduce(
-    (sum, p) => sum + Number(p.shares),
-    0
-  );
-  const totalInvested = portfolio.reduce(
-    (sum, p) => sum + Number(p.shares) * Number(p.avg_price),
-    0
-  );
-
   return (
     <div style={{ padding: 20 }}>
       <h1>Portfolio</h1>
 
-      <div
-        style={{
-          background: "#111",
-          color: "#fff",
-          borderRadius: 12,
-          padding: 16,
-          marginBottom: 20,
-        }}
-      >
-        <div><strong>Total Positions:</strong> {totalPositions}</div>
-        <div><strong>Total Shares:</strong> {totalShares}</div>
-        <div>
-          <strong>Total Invested:</strong> {totalInvested.toFixed(2)}
-        </div>
-      </div>
-
-      <div
-        style={{
-          border: "1px solid #333",
-          borderRadius: 10,
-          padding: 14,
-          marginBottom: 20,
-        }}
-      >
-        <h3>Discover Polymarket Market</h3>
-
-        <input
-          type="text"
-          placeholder="Paste Polymarket event URL"
-          value={marketUrl}
-          onChange={(e) => setMarketUrl(e.target.value)}
-          style={{ width: "100%", padding: 8, marginBottom: 8 }}
-        />
-
-        <button onClick={discoverMarket} disabled={searching}>
-          {searching ? "Searching…" : "Find Markets"}
-        </button>
-
-        {marketError && (
-          <p style={{ color: "red", marginTop: 8 }}>{marketError}</p>
-        )}
-
-        {markets.length > 0 && (
-          <pre
-            style={{
-              background: "#111",
-              color: "#0f0",
-              padding: 10,
-              marginTop: 10,
-              overflowX: "auto",
-            }}
-          >
-            {JSON.stringify(markets, null, 2)}
-          </pre>
-        )}
-      </div>
-
       {loading && <p>Loading portfolio…</p>}
       {!loading && portfolio.length === 0 && <p>No positions yet.</p>}
+
+      {portfolio.map((p) => (
+        <div
+          key={p.id}
+          style={{
+            border: "1px solid #333",
+            borderRadius: 10,
+            padding: 14,
+            marginBottom: 14,
+            background: "#111",
+            color: "#fff",
+          }}
+        >
+          <div><strong>Market:</strong> {p.market_id}</div>
+          <div><strong>Outcome:</strong> {p.outcome}</div>
+          <div><strong>Shares:</strong> {p.shares}</div>
+          <div><strong>Avg Price:</strong> {p.avg_price}</div>
+        </div>
+      ))}
 
       <button
         onClick={() => {
@@ -291,9 +185,15 @@ function App() {
 }
 
 /* ===============================
-   🔌 Mount
+   🔌 Mount (STRICT-SAFE)
 ================================ */
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+const rootEl = document.getElementById("root");
+
+if (!rootEl) {
+  throw new Error("Root element not found");
+}
+
+ReactDOM.createRoot(rootEl).render(
   <PrivyProvider
     appId="cmk602oo400ebjs0cgw0vbbao"
     config={{ loginMethods: ["email", "wallet"] }}
