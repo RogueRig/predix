@@ -59,9 +59,11 @@ function PortfolioPage() {
       try {
         setLoading(true);
 
-        let backendToken = localStorage.getItem("backend_token");
+        // 🔒 STEP 1: Resolve backend token into a GUARANTEED string
+        let storedToken = localStorage.getItem("backend_token");
+        let backendToken: string;
 
-        if (!backendToken) {
+        if (!storedToken) {
           let privyToken: string | null = null;
 
           for (let i = 0; i < 10; i++) {
@@ -95,7 +97,11 @@ function PortfolioPage() {
 
           backendToken = authJson.token;
           localStorage.setItem("backend_token", backendToken);
+        } else {
+          backendToken = storedToken;
         }
+
+        // 🔒 STEP 2: backendToken is now string (NOT nullable)
 
         const pRes = await fetch(
           "https://predix-backend.onrender.com/portfolio",
@@ -188,10 +194,7 @@ function App() {
    🔌 Mount (STRICT-SAFE)
 ================================ */
 const rootEl = document.getElementById("root");
-
-if (!rootEl) {
-  throw new Error("Root element not found");
-}
+if (!rootEl) throw new Error("Root element not found");
 
 ReactDOM.createRoot(rootEl).render(
   <PrivyProvider
