@@ -17,8 +17,8 @@ function App() {
 
   async function verifyBackendAuth() {
     try {
-      // ✅ FIX: Explicitly request Privy access token
-      const token = await getAccessToken({ audience: "privy" });
+      // ✅ Correct usage for your Privy SDK version
+      const token = await getAccessToken();
 
       if (!token) {
         alert("❌ No access token returned from Privy");
