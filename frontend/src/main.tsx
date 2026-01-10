@@ -41,11 +41,14 @@ function LoginPage() {
 }
 
 /* ===============================
-   📊 Portfolio Page (TS GUARANTEED)
+   📊 Portfolio Page (OPTION C)
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
-  const [output, setOutput] = React.useState<any>(null);
+
+  const [user, setUser] = React.useState<any>(null);
+  const [portfolio, setPortfolio] = React.useState<any[]>([]);
+  const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
@@ -56,6 +59,7 @@ function PortfolioPage() {
 
       try {
         setLoading(true);
+        setError(null);
 
         /* ---------- BACKEND TOKEN ---------- */
         let backendToken = localStorage.getItem("backend_token");
@@ -96,33 +100,37 @@ function PortfolioPage() {
           localStorage.setItem("backend_token", backendToken);
         }
 
-        /* ---------- HARD TS GUARANTEE ---------- */
         if (typeof backendToken !== "string") {
           throw new Error("Backend token missing");
         }
 
-        const finalBackendToken: string = backendToken;
+        const headers = {
+          Authorization: `Bearer ${backendToken}`,
+        };
 
-        /* ---------- FETCH PROFILE ---------- */
+        /* ---------- FETCH USER ---------- */
         const meRes = await fetch(
           "https://predix-backend.onrender.com/me",
-          {
-            headers: {
-              Authorization: `Bearer ${finalBackendToken}`,
-            },
-          }
+          { headers }
         );
-
         const meJson = await meRes.json();
+        if (!meRes.ok) throw new Error("Failed to load profile");
 
-        if (!meRes.ok) {
-          throw new Error("Failed to load profile");
+        /* ---------- FETCH PORTFOLIO ---------- */
+        const pfRes = await fetch(
+          "https://predix-backend.onrender.com/portfolio",
+          { headers }
+        );
+        const pfJson = await pfRes.json();
+        if (!pfRes.ok) throw new Error("Failed to load portfolio");
+
+        if (!cancelled) {
+          setUser(meJson.user);
+          setPortfolio(pfJson.portfolio ?? []);
         }
-
-        if (!cancelled) setOutput(meJson);
       } catch (err: any) {
         localStorage.removeItem("backend_token");
-        if (!cancelled) setOutput({ error: err.message });
+        if (!cancelled) setError(err.message);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -134,17 +142,52 @@ function PortfolioPage() {
     };
   }, [ready, authenticated, getAccessToken]);
 
+  if (loading) {
+    return <p style={{ padding: 20 }}>Loading portfolio…</p>;
+  }
+
+  if (error) {
+    return (
+      <div style={{ padding: 20 }}>
+        <p style={{ color: "red" }}>{error}</p>
+        <button
+          onClick={() => {
+            localStorage.removeItem("backend_token");
+            logout();
+          }}
+        >
+          Logout
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: 20 }}>
       <h1>Portfolio</h1>
 
-      {loading && <p>Loading…</p>}
+      <h3>User</h3>
+      <pre>{JSON.stringify(user, null, 2)}</pre>
 
-      {output && (
-        <pre style={{ background: "#111", color: "#0f0", padding: 12 }}>
-          {JSON.stringify(output, null, 2)}
-        </pre>
-      )}
+      <h3>Positions</h3>
+
+      {portfolio.length === 0 && <p>No positions yet.</p>}
+
+      {portfolio.map((p) => (
+        <div
+          key={p.id}
+          style={{
+            border: "1px solid #ddd",
+            padding: 10,
+            marginBottom: 10,
+          }}
+        >
+          <div><strong>Market:</strong> {p.market_id}</div>
+          <div><strong>Outcome:</strong> {p.outcome}</div>
+          <div><strong>Shares:</strong> {p.shares}</div>
+          <div><strong>Avg Price:</strong> {p.avg_price}</div>
+        </div>
+      ))}
 
       <button
         onClick={() => {
