@@ -60,7 +60,7 @@ async function migrate() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID,
-      privy_user_id TEXT UNIQUE,
+      privy_user_id TEXT UNIQUE NOT NULL,
       email TEXT,
       wallet_address TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
@@ -76,8 +76,7 @@ async function migrate() {
   await pool.query(`
     ALTER TABLE users
     ALTER COLUMN id SET DEFAULT gen_random_uuid(),
-    ALTER COLUMN id SET NOT NULL,
-    ALTER COLUMN privy_user_id SET NOT NULL;
+    ALTER COLUMN id SET NOT NULL;
   `);
 
   await pool.query(`
@@ -161,10 +160,12 @@ function requireBackendAuth(req, res, next) {
     if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
+
     req.userId = jwt.verify(
       auth.replace("Bearer ", ""),
       process.env.BACKEND_JWT_SECRET
     ).uid;
+
     next();
   } catch {
     res.status(401).json({ error: "Invalid backend token" });
@@ -184,11 +185,12 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
     `,
     [req.userId]
   );
+
   res.json({ portfolio: rows });
 });
 
 /* ===============================
-   🌐 Polymarket TOP MARKETS (CLOB ONLY ✅)
+   🌐 Polymarket TOP MARKETS (CLOB — CORRECT ✅)
    GET /polymarket/clob-top
 ================================ */
 app.get("/polymarket/clob-top", async (_req, res) => {
@@ -202,7 +204,9 @@ app.get("/polymarket/clob-top", async (_req, res) => {
     }
 
     const j = await r.json();
-    const markets = j?.markets ?? [];
+
+    // IMPORTANT: CLOB RETURNS AN ARRAY
+    const markets = Array.isArray(j) ? j : [];
 
     const top = markets
       .filter((m) => !m.resolved)
@@ -241,30 +245,4 @@ app.get("/", (_, res) => {
 ================================ */
 app.listen(PORT, () => {
   console.log("🚀 Backend running on", PORT);
-});
-
-/* ===============================
-   🔎 DEBUG: Gamma Events Snapshot
-   GET /debug/gamma-events
-================================ */
-app.get("/debug/gamma-events", async (_req, res) => {
-  try {
-    const r = await fetch(
-      "https://gamma-api.polymarket.com/events?order=volume&direction=desc&limit=5"
-    );
-
-    if (!r.ok) {
-      return res.status(502).json({ error: "Gamma unavailable" });
-    }
-
-    const j = await r.json();
-
-    res.json({
-      count: j?.data?.length || 0,
-      sample: j?.data?.slice(0, 5) || [],
-    });
-  } catch (err) {
-    console.error("Gamma debug failed:", err);
-    res.status(500).json({ error: "Gamma debug failed" });
-  }
 });
