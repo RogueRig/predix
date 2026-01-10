@@ -55,7 +55,6 @@ function LoginPage() {
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
-  const [backendToken, setBackendToken] = React.useState<string | null>(null);
   const [output, setOutput] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
 
@@ -103,7 +102,6 @@ function PortfolioPage() {
         }
 
         const backendJwt = authJson.token;
-        setBackendToken(backendJwt);
 
         // 3️⃣ Call /me with BACKEND token
         const meRes = await fetch(
