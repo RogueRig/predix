@@ -188,57 +188,41 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   🌐 Polymarket TOP MARKETS (CORRECT)
-   GET /polymarket/top
+   🌐 Polymarket TOP MARKETS
+   (Discovery ONLY — Option C locked)
 ================================ */
 app.get("/polymarket/top", async (_req, res) => {
   try {
-    const now = Date.now();
-
-    // 1️⃣ Fetch events sorted by volume
-    const eventsRes = await fetch(
-      "https://gamma-api.polymarket.com/events?order=volume&direction=desc"
+    // 1️⃣ Fetch top markets by volume (Gamma)
+    const gammaRes = await fetch(
+      "https://gamma-api.polymarket.com/markets?order=volume&direction=desc&limit=20"
     );
 
-    if (!eventsRes.ok) {
+    if (!gammaRes.ok) {
       return res.status(502).json({ error: "Gamma unavailable" });
     }
 
-    const eventsJson = await eventsRes.json();
-    const events = eventsJson?.data ?? [];
-
-    // 2️⃣ Filter long-term & unresolved
-    const selected = events
-      .filter(
-        (e) =>
-          !e.resolved &&
-          e.endDate &&
-          new Date(e.endDate).getTime() - now >= 7 * 24 * 60 * 60 * 1000 &&
-          e.markets?.length
-      )
-      .slice(0, 20);
+    const gammaJson = await gammaRes.json();
+    const marketsRaw = gammaJson?.data ?? [];
 
     const markets = [];
 
-    // 3️⃣ Fetch prices from CLOB
-    for (const e of selected) {
-      const marketId = e.markets[0].id;
-
-      const mRes = await fetch(
-        `https://clob.polymarket.com/markets/${marketId}`
+    // 2️⃣ Enrich with live prices from CLOB
+    for (const m of marketsRaw) {
+      const clobRes = await fetch(
+        `https://clob.polymarket.com/markets/${m.id}`
       );
 
-      if (!mRes.ok) continue;
+      if (!clobRes.ok) continue;
 
-      const m = await mRes.json();
+      const clob = await clobRes.json();
 
       markets.push({
-        event_id: e.id,
-        market_id: marketId,
-        question: e.title,
-        endDate: e.endDate,
-        volume: e.volume || 0,
-        outcomes: m.outcomes?.map((o) => ({
+        market_id: m.id,
+        question: m.question || m.title || null,
+        endDate: m.endDate,
+        volume: m.volume || 0,
+        outcomes: clob.outcomes?.map((o) => ({
           name: o.name,
           price: o.price,
         })),
