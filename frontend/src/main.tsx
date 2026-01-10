@@ -50,109 +50,103 @@ function LoginPage() {
 }
 
 /* ===============================
-   📊 Portfolio Page (ROBUST)
+   📊 Portfolio Page (DIAGNOSTIC)
 ================================ */
 function PortfolioPage() {
   const { ready, getAccessToken, logout } = usePrivy();
 
-  const [user, setUser] = React.useState<any>(null);
-  const [status, setStatus] = React.useState<
-    "loading" | "ready" | "error"
-  >("loading");
+  const [output, setOutput] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(false);
+
+  async function loadProfile() {
+    setLoading(true);
+    setOutput(null);
+
+    try {
+      if (!ready) {
+        setOutput({ error: "Privy not ready yet" });
+        return;
+      }
+
+      const token = await getAccessToken();
+
+      if (!token) {
+        setOutput({ error: "No access token returned from Privy" });
+        return;
+      }
+
+      const res = await fetch(
+        "https://predix-backend.onrender.com/me",
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      const text = await res.text();
+
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text;
+      }
+
+      setOutput({
+        httpStatus: res.status,
+        ok: res.ok,
+        response: parsed,
+      });
+    } catch (err: any) {
+      setOutput({
+        error: err.message ?? "Unknown error",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
 
   React.useEffect(() => {
-    let cancelled = false;
-
-    async function loadProfileWithRetry() {
-      if (!ready) return;
-
-      for (let attempt = 0; attempt < 10; attempt++) {
-        try {
-          const token = await getAccessToken();
-
-          // 🔁 Token not ready yet → wait and retry
-          if (!token) {
-            await new Promise((r) => setTimeout(r, 400));
-            continue;
-          }
-
-          const res = await fetch(
-            "https://predix-backend.onrender.com/me",
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-              },
-            }
-          );
-
-          if (!res.ok) {
-            throw new Error("Backend auth failed");
-          }
-
-          const data = await res.json();
-
-          if (!cancelled) {
-            setUser(data.user);
-            setStatus("ready");
-          }
-          return;
-        } catch (err) {
-          console.error("Profile load attempt failed:", err);
-          await new Promise((r) => setTimeout(r, 400));
-        }
-      }
-
-      if (!cancelled) {
-        setStatus("error");
-      }
-    }
-
-    loadProfileWithRetry();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [ready, getAccessToken]);
-
-  if (status === "loading") {
-    return <p style={{ padding: 20 }}>Loading your account…</p>;
-  }
-
-  if (status === "error") {
-    return (
-      <div style={{ padding: 20 }}>
-        <p style={{ color: "red" }}>
-          Failed to load profile from backend.
-        </p>
-        <button onClick={logout} style={{ padding: 12, fontSize: 16 }}>
-          Logout
-        </button>
-      </div>
-    );
-  }
+    loadProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
   return (
     <div style={{ padding: 20, fontFamily: "system-ui" }}>
       <h1>Predix Portfolio</h1>
-      <p>✅ Backend authenticated</p>
 
-      <pre
-        style={{
-          background: "#111",
-          color: "#0f0",
-          padding: 12,
-          overflowX: "auto",
-        }}
-      >
-        {JSON.stringify(user, null, 2)}
-      </pre>
+      {loading && <p>Loading profile…</p>}
 
-      <button
-        onClick={logout}
-        style={{ padding: 12, fontSize: 16, marginTop: 12 }}
-      >
-        Logout
-      </button>
+      {output && (
+        <pre
+          style={{
+            background: "#111",
+            color: "#0f0",
+            padding: 12,
+            overflowX: "auto",
+            fontSize: 13,
+          }}
+        >
+          {JSON.stringify(output, null, 2)}
+        </pre>
+      )}
+
+      <div style={{ marginTop: 12 }}>
+        <button
+          onClick={loadProfile}
+          style={{ padding: 12, fontSize: 16, marginRight: 10 }}
+        >
+          Reload Profile
+        </button>
+
+        <button
+          onClick={logout}
+          style={{ padding: 12, fontSize: 16 }}
+        >
+          Logout
+        </button>
+      </div>
     </div>
   );
 }
