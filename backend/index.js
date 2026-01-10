@@ -190,7 +190,7 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   🌐 Polymarket TOP MARKETS (CLOB — CORRECT ✅)
+   🌐 Polymarket TOP MARKETS (CLOB — FIXED ✅)
    GET /polymarket/clob-top
 ================================ */
 app.get("/polymarket/clob-top", async (_req, res) => {
@@ -205,8 +205,8 @@ app.get("/polymarket/clob-top", async (_req, res) => {
 
     const j = await r.json();
 
-    // IMPORTANT: CLOB RETURNS AN ARRAY
-    const markets = Array.isArray(j) ? j : [];
+    // ✅ CORRECT SHAPE
+    const markets = j.markets ?? [];
 
     const top = markets
       .filter((m) => !m.resolved)
