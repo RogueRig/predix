@@ -10,12 +10,14 @@ import {
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 
 /* ===============================
-   🔐 Auth Guard (Privy only)
+   🔐 Auth Guard
 ================================ */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { ready, authenticated } = usePrivy();
 
-  if (!ready) return <p>Loading Privy…</p>;
+  if (!ready) {
+    return <p style={{ padding: 20 }}>Loading Privy…</p>;
+  }
 
   return authenticated ? <>{children}</> : <Navigate to="/" replace />;
 }
@@ -33,7 +35,9 @@ function LoginPage() {
     }
   }, [ready, authenticated, navigate]);
 
-  if (!ready) return <p>Loading Privy…</p>;
+  if (!ready) {
+    return <p style={{ padding: 20 }}>Loading Privy…</p>;
+  }
 
   return (
     <div style={{ padding: 20, fontFamily: "system-ui" }}>
@@ -46,7 +50,7 @@ function LoginPage() {
 }
 
 /* ===============================
-   📊 Portfolio (Backend = source of truth)
+   📊 Portfolio Page
 ================================ */
 function PortfolioPage() {
   const { getAccessToken, logout } = usePrivy();
@@ -57,10 +61,15 @@ function PortfolioPage() {
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
+    let cancelled = false;
+
     async function loadProfile() {
       try {
         const token = await getAccessToken();
-        if (!token) throw new Error("No Privy token");
+
+        if (!token) {
+          throw new Error("No access token");
+        }
 
         const res = await fetch(
           "https://predix-backend.onrender.com/me",
@@ -76,17 +85,26 @@ function PortfolioPage() {
         }
 
         const data = await res.json();
-        setUser(data.user);
+        if (!cancelled) {
+          setUser(data.user);
+        }
       } catch (err) {
         console.error(err);
-        setError("Session expired. Please login again.");
-        setTimeout(() => navigate("/"), 1500);
+        if (!cancelled) {
+          setError("Session expired. Please login again.");
+          setTimeout(() => navigate("/"), 1500);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
     loadProfile();
+    return () => {
+      cancelled = true;
+    };
   }, [getAccessToken, navigate]);
 
   if (loading) {
@@ -104,7 +122,6 @@ function PortfolioPage() {
   return (
     <div style={{ padding: 20, fontFamily: "system-ui" }}>
       <h1>Predix Portfolio</h1>
-
       <p>✅ Backend authenticated</p>
 
       <pre
@@ -151,17 +168,16 @@ function App() {
 }
 
 /* ===============================
-   🔌 Mount React
+   🔌 Mount React (NO StrictMode)
 ================================ */
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <PrivyProvider
-      appId="cmk602oo400ebjs0cgw0vbbao"
-      config={{
-        loginMethods: ["email", "wallet"],
-      }}
-    >
-      <App />
-    </PrivyProvider>
-  </React.StrictMode>
+  <PrivyProvider
+    appId="cmk602oo400ebjs0cgw0vbbao"
+    config={{
+      loginMethods: ["email", "wallet"],
+      persistSession: true,
+    }}
+  >
+    <App />
+  </PrivyProvider>
 );
