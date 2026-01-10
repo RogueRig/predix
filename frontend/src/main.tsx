@@ -66,10 +66,7 @@ function PortfolioPage() {
     async function loadProfile() {
       try {
         const token = await getAccessToken();
-
-        if (!token) {
-          throw new Error("No access token");
-        }
+        if (!token) throw new Error("No token");
 
         const res = await fetch(
           "https://predix-backend.onrender.com/me",
@@ -80,14 +77,10 @@ function PortfolioPage() {
           }
         );
 
-        if (!res.ok) {
-          throw new Error("Backend auth failed");
-        }
+        if (!res.ok) throw new Error("Backend auth failed");
 
         const data = await res.json();
-        if (!cancelled) {
-          setUser(data.user);
-        }
+        if (!cancelled) setUser(data.user);
       } catch (err) {
         console.error(err);
         if (!cancelled) {
@@ -95,9 +88,7 @@ function PortfolioPage() {
           setTimeout(() => navigate("/"), 1500);
         }
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     }
 
@@ -112,11 +103,7 @@ function PortfolioPage() {
   }
 
   if (error) {
-    return (
-      <p style={{ padding: 20, color: "red" }}>
-        {error}
-      </p>
-    );
+    return <p style={{ padding: 20, color: "red" }}>{error}</p>;
   }
 
   return (
@@ -175,7 +162,6 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     appId="cmk602oo400ebjs0cgw0vbbao"
     config={{
       loginMethods: ["email", "wallet"],
-      persistSession: true,
     }}
   >
     <App />
