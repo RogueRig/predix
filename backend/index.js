@@ -59,7 +59,7 @@ async function requirePrivyAuth(req, res, next) {
 
 /* ===============================
    Auth Route (Privy)
-   (Now uses middleware)
+   Diagnostic / optional
 ================================ */
 app.post("/auth/privy", requirePrivyAuth, (req, res) => {
   const verified = req.user;
@@ -69,6 +69,21 @@ app.post("/auth/privy", requirePrivyAuth, (req, res) => {
     userId: verified.userId,
     wallet: verified.wallet?.address ?? null,
     email: verified.email ?? null,
+  });
+});
+
+/* ===============================
+   ✅ Canonical User Endpoint
+================================ */
+app.get("/me", requirePrivyAuth, (req, res) => {
+  const verified = req.user;
+
+  return res.json({
+    user: {
+      id: verified.userId,
+      email: verified.email ?? null,
+      wallet: verified.wallet?.address ?? null,
+    },
   });
 });
 
