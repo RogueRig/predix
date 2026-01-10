@@ -53,13 +53,11 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Database Migration (USERS + PORTFOLIOS)
+   Database Migration
 ================================ */
 async function migrate() {
-  // Enable UUID generation
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 
-  // USERS TABLE
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID,
@@ -94,7 +92,6 @@ async function migrate() {
     END$$;
   `);
 
-  // PORTFOLIOS TABLE
   await pool.query(`
     CREATE TABLE IF NOT EXISTS portfolios (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -107,7 +104,7 @@ async function migrate() {
     );
   `);
 
-  console.log("✅ Database migration complete (users + portfolios)");
+  console.log("✅ Database migration complete");
 }
 
 await migrate();
@@ -185,7 +182,7 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   /me
+   GET /me
 ================================ */
 app.get("/me", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
@@ -197,7 +194,29 @@ app.get("/me", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   ✅ GET /portfolio (NEW)
+   POST /portfolio  ✅ NEW
+================================ */
+app.post("/portfolio", requireBackendAuth, async (req, res) => {
+  const { market_id, outcome, shares, avg_price } = req.body;
+
+  if (!market_id || !outcome || !shares || !avg_price) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+
+  const { rows } = await pool.query(
+    `
+    INSERT INTO portfolios (user_id, market_id, outcome, shares, avg_price)
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING *;
+    `,
+    [req.userId, market_id, outcome, shares, avg_price]
+  );
+
+  res.json({ position: rows[0] });
+});
+
+/* ===============================
+   GET /portfolio
 ================================ */
 app.get("/portfolio", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
@@ -214,14 +233,14 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Health Check
+   Health
 ================================ */
 app.get("/", (_, res) => {
   res.send("Predix backend running");
 });
 
 /* ===============================
-   Start Server
+   Start
 ================================ */
 app.listen(PORT, () => {
   console.log("🚀 Backend running on", PORT);
