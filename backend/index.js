@@ -188,8 +188,7 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   🌐 Polymarket EVENT (DETERMINISTIC)
-   GET /polymarket/event?slug=...
+   🌐 Polymarket EVENT (existing)
 ================================ */
 app.get("/polymarket/event", async (req, res) => {
   try {
@@ -237,6 +236,67 @@ app.get("/polymarket/event", async (req, res) => {
   } catch (err) {
     console.error("Polymarket event fetch failed:", err);
     res.status(500).json({ error: "Polymarket event fetch failed" });
+  }
+});
+
+/* ===============================
+   🌐 Polymarket TOP MARKETS (NEW)
+   GET /polymarket/top
+================================ */
+app.get("/polymarket/top", async (_req, res) => {
+  try {
+    const now = Date.now();
+
+    const eventsRes = await fetch(
+      "https://gamma-api.polymarket.com/events"
+    );
+
+    const eventsJson = await eventsRes.json();
+    const events = eventsJson?.data ?? [];
+
+    const filtered = events
+      .filter(
+        (e) =>
+          !e.resolved &&
+          e.endDate &&
+          new Date(e.endDate).getTime() - now >= 7 * 24 * 60 * 60 * 1000 &&
+          e.markets?.length
+      )
+      .sort((a, b) => (b.volume || 0) - (a.volume || 0))
+      .slice(0, 20);
+
+    const markets = [];
+
+    for (const e of filtered) {
+      const marketId = e.markets[0].id;
+
+      const mRes = await fetch(
+        `https://clob.polymarket.com/markets/${marketId}`
+      );
+      if (!mRes.ok) continue;
+
+      const m = await mRes.json();
+
+      markets.push({
+        event_id: e.id,
+        market_id: marketId,
+        question: e.title,
+        endDate: e.endDate,
+        volume: e.volume || 0,
+        outcomes: m.outcomes?.map((o) => ({
+          name: o.name,
+          price: o.price,
+        })),
+      });
+    }
+
+    res.json({
+      markets,
+      asOf: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("Polymarket top failed:", err);
+    res.status(502).json({ error: "Polymarket unavailable" });
   }
 });
 
