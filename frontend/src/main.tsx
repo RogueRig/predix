@@ -41,16 +41,17 @@ function LoginPage() {
 }
 
 /* ===============================
-   📊 Portfolio Page (OPTION C)
+   📊 Portfolio Page
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
-
-  const [user, setUser] = React.useState<any>(null);
+  const [backendToken, setBackendToken] = React.useState<string | null>(
+    localStorage.getItem("backend_token")
+  );
   const [portfolio, setPortfolio] = React.useState<any[]>([]);
-  const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
 
+  /* ---------- Bootstrap session ---------- */
   React.useEffect(() => {
     let cancelled = false;
 
@@ -59,12 +60,10 @@ function PortfolioPage() {
 
       try {
         setLoading(true);
-        setError(null);
 
-        /* ---------- BACKEND TOKEN ---------- */
-        let backendToken = localStorage.getItem("backend_token");
+        let token = backendToken;
 
-        if (!backendToken) {
+        if (!token) {
           let privyToken: string | undefined;
 
           for (let i = 0; i < 10; i++) {
@@ -76,11 +75,9 @@ function PortfolioPage() {
             await new Promise((r) => setTimeout(r, 300));
           }
 
-          if (!privyToken) {
-            throw new Error("Privy token unavailable");
-          }
+          if (!privyToken) throw new Error("Privy token unavailable");
 
-          const authRes = await fetch(
+          const res = await fetch(
             "https://predix-backend.onrender.com/auth/privy",
             {
               method: "POST",
@@ -90,47 +87,33 @@ function PortfolioPage() {
             }
           );
 
-          const authJson: { token?: string } = await authRes.json();
-
-          if (!authRes.ok || !authJson.token) {
+          const json = await res.json();
+          if (!res.ok || !json.token) {
             throw new Error("Backend auth failed");
           }
 
-          backendToken = authJson.token;
-          localStorage.setItem("backend_token", backendToken);
+          token = json.token;
+          localStorage.setItem("backend_token", token);
+          setBackendToken(token);
         }
 
-        if (typeof backendToken !== "string") {
-          throw new Error("Backend token missing");
-        }
+        if (!token) throw new Error("Backend token missing");
 
-        const headers = {
-          Authorization: `Bearer ${backendToken}`,
-        };
-
-        /* ---------- FETCH USER ---------- */
-        const meRes = await fetch(
-          "https://predix-backend.onrender.com/me",
-          { headers }
-        );
-        const meJson = await meRes.json();
-        if (!meRes.ok) throw new Error("Failed to load profile");
-
-        /* ---------- FETCH PORTFOLIO ---------- */
-        const pfRes = await fetch(
+        // Load portfolio
+        const pRes = await fetch(
           "https://predix-backend.onrender.com/portfolio",
-          { headers }
+          {
+            headers: { Authorization: `Bearer ${token}` },
+          }
         );
-        const pfJson = await pfRes.json();
-        if (!pfRes.ok) throw new Error("Failed to load portfolio");
 
-        if (!cancelled) {
-          setUser(meJson.user);
-          setPortfolio(pfJson.portfolio ?? []);
-        }
-      } catch (err: any) {
+        const pJson = await pRes.json();
+        if (!pRes.ok) throw new Error("Failed to load portfolio");
+
+        if (!cancelled) setPortfolio(pJson.portfolio || []);
+      } catch (err) {
         localStorage.removeItem("backend_token");
-        if (!cancelled) setError(err.message);
+        if (!cancelled) setPortfolio([]);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -142,52 +125,60 @@ function PortfolioPage() {
     };
   }, [ready, authenticated, getAccessToken]);
 
-  if (loading) {
-    return <p style={{ padding: 20 }}>Loading portfolio…</p>;
-  }
+  /* ---------- Add test position ---------- */
+  async function addTestPosition() {
+    if (!backendToken) return;
 
-  if (error) {
-    return (
-      <div style={{ padding: 20 }}>
-        <p style={{ color: "red" }}>{error}</p>
-        <button
-          onClick={() => {
-            localStorage.removeItem("backend_token");
-            logout();
-          }}
-        >
-          Logout
-        </button>
-      </div>
+    await fetch("https://predix-backend.onrender.com/portfolio", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${backendToken}`,
+      },
+      body: JSON.stringify({
+        market_id: "btc-2025",
+        outcome: "YES",
+        shares: 10,
+        avg_price: 0.62,
+      }),
+    });
+
+    // Reload portfolio
+    const res = await fetch(
+      "https://predix-backend.onrender.com/portfolio",
+      {
+        headers: { Authorization: `Bearer ${backendToken}` },
+      }
     );
+    const json = await res.json();
+    setPortfolio(json.portfolio || []);
   }
 
   return (
     <div style={{ padding: 20 }}>
       <h1>Portfolio</h1>
 
-      <h3>User</h3>
-      <pre>{JSON.stringify(user, null, 2)}</pre>
+      {loading && <p>Loading…</p>}
 
-      <h3>Positions</h3>
-
-      {portfolio.length === 0 && <p>No positions yet.</p>}
+      {!loading && portfolio.length === 0 && (
+        <p>No positions yet.</p>
+      )}
 
       {portfolio.map((p) => (
-        <div
+        <pre
           key={p.id}
-          style={{
-            border: "1px solid #ddd",
-            padding: 10,
-            marginBottom: 10,
-          }}
+          style={{ background: "#111", color: "#0f0", padding: 10 }}
         >
-          <div><strong>Market:</strong> {p.market_id}</div>
-          <div><strong>Outcome:</strong> {p.outcome}</div>
-          <div><strong>Shares:</strong> {p.shares}</div>
-          <div><strong>Avg Price:</strong> {p.avg_price}</div>
-        </div>
+          {JSON.stringify(p, null, 2)}
+        </pre>
       ))}
+
+      <button onClick={addTestPosition} style={{ marginTop: 12 }}>
+        ➕ Add Test Position
+      </button>
+
+      <br />
+      <br />
 
       <button
         onClick={() => {
