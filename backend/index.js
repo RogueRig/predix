@@ -188,100 +188,55 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   🌐 Polymarket SEARCH (unchanged)
+   🌐 Polymarket VALIDATE (LOCKED)
+   POST /polymarket/validate
 ================================ */
-app.get("/polymarket/search", async (req, res) => {
+app.post("/polymarket/validate", async (req, res) => {
   try {
-    const { q } = req.query;
-    if (!q) {
-      return res.status(400).json({ error: "Missing query param q" });
+    let { marketId, url } = req.body;
+
+    if (!marketId && !url) {
+      return res
+        .status(400)
+        .json({ error: "marketId or url is required" });
     }
 
-    const searchRes = await fetch(
-      `https://gamma-api.polymarket.com/events?search=${encodeURIComponent(
-        q
-      )}`
-    );
+    // Extract marketId from URL if provided
+    if (!marketId && url) {
+      if (!url.includes("polymarket.com")) {
+        return res.status(400).json({ error: "Invalid Polymarket URL" });
+      }
 
-    const searchJson = await searchRes.json();
-    const events = searchJson?.data ?? [];
-
-    const results = events.map((e) => ({
-      id: e.id,
-      title: e.title,
-      slug: e.slug,
-      endDate: e.endDate,
-      resolved: e.resolved,
-      markets: e.markets?.map((m) => ({
-        id: m.id,
-        outcomes: m.outcomes,
-      })),
-    }));
-
-    res.json({ results });
-  } catch (err) {
-    console.error("Polymarket search failed:", err);
-    res.status(500).json({ error: "Polymarket search failed" });
-  }
-});
-
-/* ===============================
-   🌐 Polymarket RESOLVE BY URL (NEW, SAFE)
-   POST /polymarket/resolve-url
-   { "url": "https://polymarket.com/event/..." }
-================================ */
-app.post("/polymarket/resolve-url", async (req, res) => {
-  try {
-    const { url } = req.body;
-    if (!url || !url.includes("/event/")) {
-      return res.status(400).json({ error: "Invalid Polymarket URL" });
+      // URL must already contain marketId (frontend responsibility)
+      return res.status(400).json({
+        error:
+          "URL parsing not allowed. Frontend must supply explicit marketId.",
+      });
     }
 
-    // extract slug from URL
-    const slug = url.split("/event/")[1]?.split("?")[0];
-    if (!slug) {
-      return res.status(400).json({ error: "Could not extract slug" });
-    }
-
-    // fetch event by slug
-    const eventRes = await fetch(
-      `https://gamma-api.polymarket.com/events?slug=${encodeURIComponent(
-        slug
-      )}`
-    );
-
-    const eventJson = await eventRes.json();
-    const event = eventJson?.data?.[0];
-
-    if (!event) {
-      return res.status(404).json({ error: "Event not found" });
-    }
-
-    const marketId = event.markets?.[0]?.id;
-    if (!marketId) {
-      return res.status(404).json({ error: "Market not found" });
-    }
-
-    // fetch live market prices
+    // Validate market via CLOB
     const marketRes = await fetch(
       `https://clob.polymarket.com/markets/${marketId}`
     );
+
+    if (!marketRes.ok) {
+      return res.status(404).json({ error: "Market not found" });
+    }
+
     const market = await marketRes.json();
 
     res.json({
-      slug,
-      event_id: event.id,
-      question: event.title,
-      endDate: event.endDate,
-      market_id: marketId,
+      market_id: market.id,
+      question: market.question,
+      resolved: market.resolved,
       outcomes: market.outcomes?.map((o) => ({
         name: o.name,
         price: o.price,
       })),
     });
   } catch (err) {
-    console.error("Resolve URL failed:", err);
-    res.status(500).json({ error: "Resolve URL failed" });
+    console.error("Polymarket validate failed:", err);
+    res.status(500).json({ error: "Polymarket validate failed" });
   }
 });
 
