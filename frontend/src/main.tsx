@@ -50,68 +50,79 @@ function LoginPage() {
 }
 
 /* ===============================
-   📊 Portfolio Page (DIAGNOSTIC)
+   📊 Portfolio Page (SDK SAFE)
 ================================ */
 function PortfolioPage() {
-  const { ready, getAccessToken, logout } = usePrivy();
+  const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
   const [output, setOutput] = React.useState<any>(null);
-  const [loading, setLoading] = React.useState(false);
-
-  async function loadProfile() {
-    setLoading(true);
-    setOutput(null);
-
-    try {
-      if (!ready) {
-        setOutput({ error: "Privy not ready yet" });
-        return;
-      }
-
-      // ✅ CRITICAL FIX: force fresh token
-      const token = await getAccessToken({ forceRefresh: true });
-
-      if (!token) {
-        setOutput({ error: "No access token returned from Privy" });
-        return;
-      }
-
-      const res = await fetch(
-        "https://predix-backend.onrender.com/me",
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      const text = await res.text();
-
-      let parsed;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        parsed = text;
-      }
-
-      setOutput({
-        httpStatus: res.status,
-        ok: res.ok,
-        response: parsed,
-      });
-    } catch (err: any) {
-      setOutput({
-        error: err.message ?? "Unknown error",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
+    let cancelled = false;
+
+    async function loadProfile() {
+      if (!ready || !authenticated) return;
+
+      setLoading(true);
+      setOutput(null);
+
+      let token: string | null = null;
+
+      // 🔁 Wait for token to exist (SDK-compatible)
+      for (let i = 0; i < 10; i++) {
+        token = await getAccessToken();
+        if (token) break;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+
+      if (!token) {
+        if (!cancelled) {
+          setOutput({ error: "Privy token not available yet" });
+          setLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const res = await fetch(
+          "https://predix-backend.onrender.com/me",
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        const text = await res.text();
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          parsed = text;
+        }
+
+        if (!cancelled) {
+          setOutput({
+            httpStatus: res.status,
+            ok: res.ok,
+            response: parsed,
+          });
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setOutput({ error: err.message ?? "Unknown error" });
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
     loadProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready]);
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, authenticated, getAccessToken]);
 
   return (
     <div style={{ padding: 20, fontFamily: "system-ui" }}>
@@ -135,10 +146,10 @@ function PortfolioPage() {
 
       <div style={{ marginTop: 12 }}>
         <button
-          onClick={loadProfile}
+          onClick={() => window.location.reload()}
           style={{ padding: 12, fontSize: 16, marginRight: 10 }}
         >
-          Reload Profile
+          Reload
         </button>
 
         <button
