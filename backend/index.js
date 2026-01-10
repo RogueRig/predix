@@ -28,12 +28,6 @@ const pool = new Pool({
     process.env.NODE_ENV === "production"
       ? { rejectUnauthorized: false }
       : false,
-
-  // 🔥 CRITICAL: disable prepared statement caching
-  statement_timeout: 0,
-  query_timeout: 0,
-  idle_in_transaction_session_timeout: 0,
-  allowExitOnIdle: false,
 });
 
 /* ===============================
@@ -71,9 +65,9 @@ async function ensureUsersSchema() {
     );
 
     if (rows.length === 0) {
-      console.log(`🛠 Adding missing column: ${name}`);
-      await pool.query(`ALTER TABLE users ADD COLUMN ${sql};`);
-      console.log(`✅ Column ${name} added`);
+      console.log(\`🛠 Adding missing column: \${name}\`);
+      await pool.query(\`ALTER TABLE users ADD COLUMN \${sql};\`);
+      console.log(\`✅ Column \${name} added\`);
     }
   }
 
@@ -107,7 +101,8 @@ async function requirePrivyAuth(req, res, next) {
 
     const token = authHeader.replace("Bearer ", "");
 
-    const verified = await privy.verifyAuthToken(token);
+    // ✅ CORRECT METHOD FOR FRONTEND TOKENS
+    const verified = await privy.verifyAccessToken(token);
 
     const privyUserId = verified.userId;
     const email = verified.email ?? null;
