@@ -252,3 +252,29 @@ app.get("/", (_, res) => {
 app.listen(PORT, () => {
   console.log("🚀 Backend running on", PORT);
 });
+
+/* ===============================
+   🔎 DEBUG: Gamma Events Snapshot
+   GET /debug/gamma-events
+================================ */
+app.get("/debug/gamma-events", async (_req, res) => {
+  try {
+    const r = await fetch(
+      "https://gamma-api.polymarket.com/events?order=volume&direction=desc&limit=5"
+    );
+
+    if (!r.ok) {
+      return res.status(502).json({ error: "Gamma unavailable" });
+    }
+
+    const j = await r.json();
+
+    res.json({
+      count: j?.data?.length || 0,
+      sample: j?.data?.slice(0, 5) || [],
+    });
+  } catch (err) {
+    console.error("Gamma debug failed:", err);
+    res.status(500).json({ error: "Gamma debug failed" });
+  }
+});
