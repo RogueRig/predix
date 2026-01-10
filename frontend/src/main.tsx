@@ -41,7 +41,7 @@ function LoginPage() {
 }
 
 /* ===============================
-   📊 Portfolio Page (FINAL)
+   📊 Portfolio Page (TS-SAFE)
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
@@ -57,21 +57,22 @@ function PortfolioPage() {
       try {
         setLoading(true);
 
+        // 1️⃣ Load backend token
         let backendToken = localStorage.getItem("backend_token");
 
+        // 2️⃣ Exchange Privy token if needed
         if (!backendToken) {
-          let tempToken: string | null = null;
+          let privyToken: string | null = null;
 
           for (let i = 0; i < 10; i++) {
-            tempToken = await getAccessToken();
-            if (tempToken) break;
+            privyToken = await getAccessToken();
+            if (privyToken) break;
             await new Promise((r) => setTimeout(r, 300));
           }
 
-          if (!tempToken) throw new Error("Privy token unavailable");
-
-          // ⬇️ PROMOTE TO NON-NULL
-          const privyToken: string = tempToken;
+          if (privyToken === null) {
+            throw new Error("Privy token unavailable");
+          }
 
           const authRes = await fetch(
             "https://predix-backend.onrender.com/auth/privy",
@@ -93,14 +94,17 @@ function PortfolioPage() {
           localStorage.setItem("backend_token", backendToken);
         }
 
-        // ⬇️ PROMOTE TO NON-NULL
-        const finalBackendToken: string = backendToken;
+        // ✅ HARD GUARD — TS & runtime safe
+        if (backendToken === null) {
+          throw new Error("Backend token missing");
+        }
 
+        // 3️⃣ Call /me
         const meRes = await fetch(
           "https://predix-backend.onrender.com/me",
           {
             headers: {
-              Authorization: `Bearer ${finalBackendToken}`,
+              Authorization: `Bearer ${backendToken}`,
             },
           }
         );
