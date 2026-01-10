@@ -51,22 +51,23 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Database Migration
+   Database Migration (SAFE & IDEMPOTENT)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 
+  // Base table (no balance assumption)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID,
       privy_user_id TEXT UNIQUE NOT NULL,
       email TEXT,
       wallet_address TEXT,
-      balance NUMERIC NOT NULL DEFAULT 1000,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
 
+  // Ensure id exists everywhere
   await pool.query(`
     UPDATE users
     SET id = gen_random_uuid()
@@ -79,12 +80,20 @@ async function migrate() {
     ALTER COLUMN id SET NOT NULL;
   `);
 
+  // ✅ SAFE balance addition (THIS FIXES YOUR ERROR)
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS balance NUMERIC NOT NULL DEFAULT 1000;
+  `);
+
+  // Backfill just in case
   await pool.query(`
     UPDATE users
     SET balance = 1000
     WHERE balance IS NULL;
   `);
 
+  // Primary key
   await pool.query(`
     DO $$
     BEGIN
@@ -96,6 +105,7 @@ async function migrate() {
     END$$;
   `);
 
+  // Portfolio table
   await pool.query(`
     CREATE TABLE IF NOT EXISTS portfolios (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
