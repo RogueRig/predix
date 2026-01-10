@@ -50,38 +50,53 @@ function LoginPage() {
 ================================ */
 function PortfolioPage() {
   const { logout, getAccessToken } = usePrivy();
+  const [profile, setProfile] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(false);
 
   async function verifyBackendAuth() {
     try {
       const token = await getAccessToken();
-
-      if (!token) {
-        alert("❌ No access token returned from Privy");
-        return;
-      }
+      if (!token) return alert("No token");
 
       const res = await fetch(
         "https://predix-backend.onrender.com/auth/privy",
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
         }
       );
 
       const data = await res.json();
+      alert(JSON.stringify(data, null, 2));
+    } catch {
+      alert("Backend auth failed");
+    }
+  }
 
-      if (!res.ok) {
-        alert("❌ Backend auth failed:\n" + JSON.stringify(data, null, 2));
-        return;
-      }
+  async function fetchMyProfile() {
+    try {
+      setLoading(true);
+      const token = await getAccessToken();
+      if (!token) return;
 
-      alert("✅ Backend auth success:\n" + JSON.stringify(data, null, 2));
+      const res = await fetch(
+        "https://predix-backend.onrender.com/me",
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      const data = await res.json();
+      setProfile(data);
     } catch (err) {
       console.error(err);
-      alert("❌ Error calling backend");
+      alert("Failed to fetch profile");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -90,12 +105,36 @@ function PortfolioPage() {
       <h1>Predix Portfolio</h1>
       <p>✅ Logged in</p>
 
-      <button
-        onClick={verifyBackendAuth}
-        style={{ padding: 12, fontSize: 16, marginRight: 10 }}
-      >
-        Verify Backend Auth
-      </button>
+      <div style={{ marginBottom: 12 }}>
+        <button
+          onClick={verifyBackendAuth}
+          style={{ padding: 12, fontSize: 16, marginRight: 10 }}
+        >
+          Verify Backend Auth
+        </button>
+
+        <button
+          onClick={fetchMyProfile}
+          style={{ padding: 12, fontSize: 16 }}
+        >
+          Get My Profile
+        </button>
+      </div>
+
+      {loading && <p>Loading profile…</p>}
+
+      {profile && (
+        <pre
+          style={{
+            background: "#111",
+            color: "#0f0",
+            padding: 12,
+            overflowX: "auto",
+          }}
+        >
+          {JSON.stringify(profile, null, 2)}
+        </pre>
+      )}
 
       <button onClick={logout} style={{ padding: 12, fontSize: 16 }}>
         Logout
