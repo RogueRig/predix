@@ -44,10 +44,9 @@ if (!PRIVY_APP_ID || !PRIVY_APP_SECRET) {
 const privy = new PrivyClient(PRIVY_APP_ID, PRIVY_APP_SECRET);
 
 /* ===============================
-   🔧 DB Migration (FULL + SAFE)
+   🔧 DB Migration (BLOCKING)
 ================================ */
 async function ensureUsersSchema() {
-  // 1️⃣ Ensure base table exists
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -55,7 +54,6 @@ async function ensureUsersSchema() {
     );
   `);
 
-  // 2️⃣ Helper to add column if missing
   async function ensureColumn(name, sql) {
     const { rows } = await pool.query(
       `
@@ -70,17 +68,13 @@ async function ensureUsersSchema() {
       console.log(`🛠 Adding missing column: ${name}`);
       await pool.query(`ALTER TABLE users ADD COLUMN ${sql};`);
       console.log(`✅ Column ${name} added`);
-    } else {
-      console.log(`✅ Column ${name} already exists`);
     }
   }
 
-  // 3️⃣ Ensure required columns
   await ensureColumn("privy_user_id", "privy_user_id TEXT");
   await ensureColumn("email", "email TEXT");
   await ensureColumn("wallet_address", "wallet_address TEXT");
 
-  // 4️⃣ Enforce constraints
   await pool.query(`
     ALTER TABLE users
     ALTER COLUMN privy_user_id SET NOT NULL;
@@ -93,11 +87,6 @@ async function ensureUsersSchema() {
 
   console.log("✅ Users schema fully ensured");
 }
-
-ensureUsersSchema().catch((err) => {
-  console.error("❌ Failed DB migration:", err);
-  process.exit(1);
-});
 
 /* ===============================
    🔐 Privy Auth + DB User
@@ -112,7 +101,6 @@ async function requirePrivyAuth(req, res, next) {
 
     const token = authHeader.replace("Bearer ", "");
 
-    // ✅ Verify with Privy
     const verified = await privy.verifyAuthToken(token);
 
     const privyUserId = verified.userId;
@@ -136,7 +124,7 @@ async function requirePrivyAuth(req, res, next) {
     next();
   } catch (err) {
     console.error("❌ Auth failed:", err.message);
-    return res.status(401).json({ error: "Invalid Privy token" });
+    res.status(401).json({ error: "Invalid Privy token" });
   }
 }
 
@@ -156,29 +144,16 @@ app.get("/", (_, res) => {
 });
 
 /* ===============================
-   Start Server
+   🚀 START SERVER (AFTER MIGRATION)
 ================================ */
-app.listen(PORT, () => {
-  console.log(`🚀 Predix backend listening on ${PORT}`);
-});
-
-/* ===============================
-   🔎 DB SCHEMA DEBUG (TEMP)
-================================ */
-app.get("/__debug/users-schema", async (_, res) => {
+(async () => {
   try {
-    const { rows } = await pool.query(`
-      SELECT column_name, data_type
-      FROM information_schema.columns
-      WHERE table_name = 'users'
-      ORDER BY ordinal_position;
-    `);
-
-    res.json({
-      columns: rows,
+    await ensureUsersSchema();
+    app.listen(PORT, () => {
+      console.log(`🚀 Predix backend listening on ${PORT}`);
     });
   } catch (err) {
-    console.error("❌ Schema debug failed:", err.message);
-    res.status(500).json({ error: err.message });
+    console.error("❌ Startup failed:", err);
+    process.exit(1);
   }
-});
+})();
