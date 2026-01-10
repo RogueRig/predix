@@ -48,11 +48,11 @@ function PortfolioPage() {
   const [portfolio, setPortfolio] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
 
-  /* ---------- market validation state ---------- */
+  /* ---------- market discovery state ---------- */
   const [marketUrl, setMarketUrl] = React.useState("");
-  const [marketResult, setMarketResult] = React.useState<any>(null);
+  const [markets, setMarkets] = React.useState<any[]>([]);
   const [marketError, setMarketError] = React.useState<string | null>(null);
-  const [validating, setValidating] = React.useState(false);
+  const [searching, setSearching] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -137,33 +137,40 @@ function PortfolioPage() {
     };
   }, [ready, authenticated, getAccessToken]);
 
-  /* ---------- validate market ---------- */
-  async function validateMarket() {
-    setMarketResult(null);
+  /* ---------- discover market (frontend only) ---------- */
+  async function discoverMarket() {
+    setMarkets([]);
     setMarketError(null);
-    setValidating(true);
+    setSearching(true);
 
     try {
+      if (!marketUrl.includes("/event/")) {
+        throw new Error("Invalid Polymarket event URL");
+      }
+
+      const slug = marketUrl.split("/event/")[1]?.split("?")[0];
+      if (!slug) {
+        throw new Error("Could not extract event slug");
+      }
+
       const res = await fetch(
-        "https://predix-backend.onrender.com/polymarket/validate",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: marketUrl }),
-        }
+        `https://gamma-api.polymarket.com/events?slug=${encodeURIComponent(
+          slug
+        )}`
       );
 
       const json = await res.json();
+      const event = json?.data?.[0];
 
-      if (!res.ok) {
-        throw new Error(json.error || "Validation failed");
+      if (!event || !event.markets) {
+        throw new Error("Event not found on Polymarket");
       }
 
-      setMarketResult(json);
+      setMarkets(event.markets);
     } catch (err: any) {
       setMarketError(err.message);
     } finally {
-      setValidating(false);
+      setSearching(false);
     }
   }
 
@@ -188,7 +195,6 @@ function PortfolioPage() {
           padding: 16,
           marginBottom: 20,
           fontSize: 16,
-          lineHeight: 1.6,
         }}
       >
         <div><strong>Total Positions:</strong> {totalPositions}</div>
@@ -198,7 +204,7 @@ function PortfolioPage() {
         </div>
       </div>
 
-      {/* Market validation */}
+      {/* Market Discovery */}
       <div
         style={{
           border: "1px solid #333",
@@ -207,25 +213,25 @@ function PortfolioPage() {
           marginBottom: 20,
         }}
       >
-        <h3>Validate Polymarket Market</h3>
+        <h3>Discover Polymarket Market</h3>
 
         <input
           type="text"
-          placeholder="Paste Polymarket market URL"
+          placeholder="Paste Polymarket event URL"
           value={marketUrl}
           onChange={(e) => setMarketUrl(e.target.value)}
           style={{ width: "100%", padding: 8, marginBottom: 8 }}
         />
 
-        <button onClick={validateMarket} disabled={validating || !marketUrl}>
-          {validating ? "Validating…" : "Validate Market"}
+        <button onClick={discoverMarket} disabled={searching || !marketUrl}>
+          {searching ? "Searching…" : "Find Markets"}
         </button>
 
         {marketError && (
           <p style={{ color: "red", marginTop: 8 }}>{marketError}</p>
         )}
 
-        {marketResult && (
+        {markets.length > 0 && (
           <pre
             style={{
               background: "#111",
@@ -235,7 +241,7 @@ function PortfolioPage() {
               overflowX: "auto",
             }}
           >
-            {JSON.stringify(marketResult, null, 2)}
+            {JSON.stringify(markets, null, 2)}
           </pre>
         )}
       </div>
