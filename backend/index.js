@@ -53,14 +53,13 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Database Migration (LOCKED)
-   Runs once on boot, safe to re-run
+   Database Migration (USERS + PORTFOLIOS)
 ================================ */
 async function migrate() {
   // Enable UUID generation
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 
-  // Ensure users table exists
+  // USERS TABLE
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID,
@@ -71,14 +70,12 @@ async function migrate() {
     );
   `);
 
-  // Backfill missing IDs
   await pool.query(`
     UPDATE users
     SET id = gen_random_uuid()
     WHERE id IS NULL;
   `);
 
-  // Enforce defaults + constraints
   await pool.query(`
     ALTER TABLE users
     ALTER COLUMN id SET DEFAULT gen_random_uuid(),
@@ -86,7 +83,6 @@ async function migrate() {
     ALTER COLUMN privy_user_id SET NOT NULL;
   `);
 
-  // Add primary key if missing
   await pool.query(`
     DO $$
     BEGIN
@@ -98,14 +94,26 @@ async function migrate() {
     END$$;
   `);
 
-  console.log("✅ Database migration complete");
+  // PORTFOLIOS TABLE
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS portfolios (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      market_id TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      shares NUMERIC NOT NULL,
+      avg_price NUMERIC NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  console.log("✅ Database migration complete (users + portfolios)");
 }
 
 await migrate();
 
 /* ===============================
    🔐 Privy → Backend Auth Exchange
-   Stable & production-ready
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
@@ -177,7 +185,7 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   /me — Canonical User Endpoint
+   /me
 ================================ */
 app.get("/me", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
@@ -186,6 +194,23 @@ app.get("/me", requireBackendAuth, async (req, res) => {
   );
 
   res.json({ user: rows[0] });
+});
+
+/* ===============================
+   ✅ GET /portfolio (NEW)
+================================ */
+app.get("/portfolio", requireBackendAuth, async (req, res) => {
+  const { rows } = await pool.query(
+    `
+    SELECT id, market_id, outcome, shares, avg_price, created_at
+    FROM portfolios
+    WHERE user_id = $1
+    ORDER BY created_at DESC;
+    `,
+    [req.userId]
+  );
+
+  res.json({ portfolio: rows });
 });
 
 /* ===============================
