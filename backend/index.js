@@ -44,54 +44,54 @@ if (!PRIVY_APP_ID || !PRIVY_APP_SECRET) {
 const privy = new PrivyClient(PRIVY_APP_ID, PRIVY_APP_SECRET);
 
 /* ===============================
-   🔧 DB Migration (SAFE)
+   🔧 DB Migration (FULL + SAFE)
 ================================ */
 async function ensureUsersSchema() {
-  // 1️⃣ Ensure table exists (legacy-safe)
+  // 1️⃣ Ensure base table exists
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      email TEXT,
-      wallet_address TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
 
-  // 2️⃣ Add privy_user_id column if missing
-  const { rows } = await pool.query(`
-    SELECT column_name
-    FROM information_schema.columns
-    WHERE table_name = 'users' AND column_name = 'privy_user_id';
+  // 2️⃣ Helper to add column if missing
+  async function ensureColumn(name, sql) {
+    const { rows } = await pool.query(
+      `
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_name = 'users' AND column_name = $1;
+      `,
+      [name]
+    );
+
+    if (rows.length === 0) {
+      console.log(`🛠 Adding missing column: ${name}`);
+      await pool.query(`ALTER TABLE users ADD COLUMN ${sql};`);
+      console.log(`✅ Column ${name} added`);
+    } else {
+      console.log(`✅ Column ${name} already exists`);
+    }
+  }
+
+  // 3️⃣ Ensure required columns
+  await ensureColumn("privy_user_id", "privy_user_id TEXT");
+  await ensureColumn("email", "email TEXT");
+  await ensureColumn("wallet_address", "wallet_address TEXT");
+
+  // 4️⃣ Enforce constraints
+  await pool.query(`
+    ALTER TABLE users
+    ALTER COLUMN privy_user_id SET NOT NULL;
   `);
 
-  if (rows.length === 0) {
-    console.log("🛠 Adding missing privy_user_id column");
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_privy_user_id_idx
+    ON users (privy_user_id);
+  `);
 
-    await pool.query(`
-      ALTER TABLE users
-      ADD COLUMN privy_user_id TEXT;
-    `);
-
-    await pool.query(`
-      UPDATE users
-      SET privy_user_id = id::text
-      WHERE privy_user_id IS NULL;
-    `);
-
-    await pool.query(`
-      ALTER TABLE users
-      ALTER COLUMN privy_user_id SET NOT NULL;
-    `);
-
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS users_privy_user_id_idx
-      ON users (privy_user_id);
-    `);
-
-    console.log("✅ privy_user_id column added safely");
-  } else {
-    console.log("✅ privy_user_id column already exists");
-  }
+  console.log("✅ Users schema fully ensured");
 }
 
 ensureUsersSchema().catch((err) => {
@@ -103,8 +103,6 @@ ensureUsersSchema().catch((err) => {
    🔐 Privy Auth + DB User
 ================================ */
 async function requirePrivyAuth(req, res, next) {
-  console.log("➡️ Incoming authenticated request:", req.method, req.path);
-
   try {
     const authHeader = req.headers.authorization;
 
@@ -114,6 +112,7 @@ async function requirePrivyAuth(req, res, next) {
 
     const token = authHeader.replace("Bearer ", "");
 
+    // ✅ Verify with Privy
     const verified = await privy.verifyAuthToken(token);
 
     const privyUserId = verified.userId;
