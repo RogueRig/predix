@@ -226,48 +226,62 @@ app.get("/polymarket/search", async (req, res) => {
 });
 
 /* ===============================
-   🌐 Polymarket RESOLVE (NEW)
-   GET /polymarket/resolve?q=...
+   🌐 Polymarket RESOLVE BY URL (NEW, SAFE)
+   POST /polymarket/resolve-url
+   { "url": "https://polymarket.com/event/..." }
 ================================ */
-app.get("/polymarket/resolve", async (req, res) => {
+app.post("/polymarket/resolve-url", async (req, res) => {
   try {
-    const { q } = req.query;
-    if (!q) {
-      return res.status(400).json({ error: "Missing query param q" });
+    const { url } = req.body;
+    if (!url || !url.includes("/event/")) {
+      return res.status(400).json({ error: "Invalid Polymarket URL" });
     }
 
-    const keywords = q
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((w) => w.length > 3);
-
-    for (const word of keywords) {
-      const searchRes = await fetch(
-        `https://gamma-api.polymarket.com/events?search=${encodeURIComponent(
-          word
-        )}`
-      );
-
-      const searchJson = await searchRes.json();
-      const event = searchJson?.data?.[0];
-
-      if (event && event.markets?.length) {
-        return res.json({
-          matched_on: word,
-          id: event.id,
-          title: event.title,
-          slug: event.slug,
-          endDate: event.endDate,
-          resolved: event.resolved,
-          market: event.markets[0],
-        });
-      }
+    // extract slug from URL
+    const slug = url.split("/event/")[1]?.split("?")[0];
+    if (!slug) {
+      return res.status(400).json({ error: "Could not extract slug" });
     }
 
-    res.status(404).json({ error: "No matching Polymarket event found" });
+    // fetch event by slug
+    const eventRes = await fetch(
+      `https://gamma-api.polymarket.com/events?slug=${encodeURIComponent(
+        slug
+      )}`
+    );
+
+    const eventJson = await eventRes.json();
+    const event = eventJson?.data?.[0];
+
+    if (!event) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const marketId = event.markets?.[0]?.id;
+    if (!marketId) {
+      return res.status(404).json({ error: "Market not found" });
+    }
+
+    // fetch live market prices
+    const marketRes = await fetch(
+      `https://clob.polymarket.com/markets/${marketId}`
+    );
+    const market = await marketRes.json();
+
+    res.json({
+      slug,
+      event_id: event.id,
+      question: event.title,
+      endDate: event.endDate,
+      market_id: marketId,
+      outcomes: market.outcomes?.map((o) => ({
+        name: o.name,
+        price: o.price,
+      })),
+    });
   } catch (err) {
-    console.error("Polymarket resolve failed:", err);
-    res.status(500).json({ error: "Polymarket resolve failed" });
+    console.error("Resolve URL failed:", err);
+    res.status(500).json({ error: "Resolve URL failed" });
   }
 });
 
