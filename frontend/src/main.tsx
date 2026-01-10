@@ -117,7 +117,7 @@ function PortfolioPage() {
           "https://predix-backend.onrender.com/me",
           {
             headers: {
-              Authorization: `Bearer ${backendToken}`,
+              Authorization: `Bearer ${backendToken!}`,
             },
           }
         );
