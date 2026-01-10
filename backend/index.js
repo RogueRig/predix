@@ -161,3 +161,24 @@ app.get("/", (_, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Predix backend listening on ${PORT}`);
 });
+
+/* ===============================
+   🔎 DB SCHEMA DEBUG (TEMP)
+================================ */
+app.get("/__debug/users-schema", async (_, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_name = 'users'
+      ORDER BY ordinal_position;
+    `);
+
+    res.json({
+      columns: rows,
+    });
+  } catch (err) {
+    console.error("❌ Schema debug failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
