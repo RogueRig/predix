@@ -50,7 +50,7 @@ function LoginPage() {
 }
 
 /* ===============================
-   📊 Portfolio Page (TS-SAFE)
+   📊 Portfolio Page (TS SAFE)
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
@@ -68,11 +68,11 @@ function PortfolioPage() {
       setOutput(null);
 
       try {
-        // 1️⃣ Try existing backend token
+        // 1️⃣ Load backend token if exists
         let storedToken = localStorage.getItem("backend_token");
 
-        // 2️⃣ If missing → exchange Privy token
-        if (!storedToken) {
+        // 2️⃣ If missing, exchange Privy token
+        if (storedToken === null) {
           let privyToken: string | null = null;
 
           for (let i = 0; i < 10; i++) {
@@ -81,7 +81,7 @@ function PortfolioPage() {
             await new Promise((r) => setTimeout(r, 300));
           }
 
-          if (!privyToken) {
+          if (privyToken === null) {
             throw new Error("Privy token unavailable");
           }
 
@@ -105,10 +105,14 @@ function PortfolioPage() {
           localStorage.setItem("backend_token", storedToken);
         }
 
-        // 🔒 TypeScript-safe narrowing
-        const backendToken: string = storedToken;
+        // ✅ TS GUARANTEE
+        if (storedToken === null) {
+          throw new Error("Backend token missing");
+        }
 
-        // 3️⃣ Call /me using BACKEND JWT
+        const backendToken = storedToken;
+
+        // 3️⃣ Call /me with backend JWT
         const meRes = await fetch(
           "https://predix-backend.onrender.com/me",
           {
