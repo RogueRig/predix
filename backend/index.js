@@ -28,9 +28,9 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Auth Route (Privy)
+   🔐 Privy Auth Middleware
 ================================ */
-app.post("/auth/privy", async (req, res) => {
+async function requirePrivyAuth(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
 
@@ -45,18 +45,31 @@ app.post("/auth/privy", async (req, res) => {
     // ✅ OFFICIAL PRIVY VERIFICATION
     const verified = await privy.verifyAuthToken(token);
 
-    return res.json({
-      ok: true,
-      userId: verified.userId,
-      wallet: verified.wallet?.address ?? null,
-      email: verified.email ?? null,
-    });
+    // Attach verified user to request
+    req.user = verified;
+
+    next();
   } catch (err) {
     console.error("❌ Privy verification failed:", err.message);
     return res.status(401).json({
       error: "Invalid Privy token",
     });
   }
+}
+
+/* ===============================
+   Auth Route (Privy)
+   (Now uses middleware)
+================================ */
+app.post("/auth/privy", requirePrivyAuth, (req, res) => {
+  const verified = req.user;
+
+  return res.json({
+    ok: true,
+    userId: verified.userId,
+    wallet: verified.wallet?.address ?? null,
+    email: verified.email ?? null,
+  });
 });
 
 /* ===============================
