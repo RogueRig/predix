@@ -44,8 +44,15 @@ function LoginPage() {
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
+
   const [portfolio, setPortfolio] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
+
+  /* ---------- market validation state ---------- */
+  const [marketUrl, setMarketUrl] = React.useState("");
+  const [marketResult, setMarketResult] = React.useState<any>(null);
+  const [marketError, setMarketError] = React.useState<string | null>(null);
+  const [validating, setValidating] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -130,6 +137,36 @@ function PortfolioPage() {
     };
   }, [ready, authenticated, getAccessToken]);
 
+  /* ---------- validate market ---------- */
+  async function validateMarket() {
+    setMarketResult(null);
+    setMarketError(null);
+    setValidating(true);
+
+    try {
+      const res = await fetch(
+        "https://predix-backend.onrender.com/polymarket/validate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: marketUrl }),
+        }
+      );
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Validation failed");
+      }
+
+      setMarketResult(json);
+    } catch (err: any) {
+      setMarketError(err.message);
+    } finally {
+      setValidating(false);
+    }
+  }
+
   /* ---------- totals ---------- */
   const totalPositions = portfolio.length;
   const totalShares = portfolio.reduce((sum, p) => sum + Number(p.shares), 0);
@@ -161,11 +198,51 @@ function PortfolioPage() {
         </div>
       </div>
 
+      {/* Market validation */}
+      <div
+        style={{
+          border: "1px solid #333",
+          borderRadius: 10,
+          padding: 14,
+          marginBottom: 20,
+        }}
+      >
+        <h3>Validate Polymarket Market</h3>
+
+        <input
+          type="text"
+          placeholder="Paste Polymarket market URL"
+          value={marketUrl}
+          onChange={(e) => setMarketUrl(e.target.value)}
+          style={{ width: "100%", padding: 8, marginBottom: 8 }}
+        />
+
+        <button onClick={validateMarket} disabled={validating || !marketUrl}>
+          {validating ? "Validating…" : "Validate Market"}
+        </button>
+
+        {marketError && (
+          <p style={{ color: "red", marginTop: 8 }}>{marketError}</p>
+        )}
+
+        {marketResult && (
+          <pre
+            style={{
+              background: "#111",
+              color: "#0f0",
+              padding: 10,
+              marginTop: 10,
+              overflowX: "auto",
+            }}
+          >
+            {JSON.stringify(marketResult, null, 2)}
+          </pre>
+        )}
+      </div>
+
       {loading && <p>Loading portfolio…</p>}
 
-      {!loading && portfolio.length === 0 && (
-        <p>No positions yet.</p>
-      )}
+      {!loading && portfolio.length === 0 && <p>No positions yet.</p>}
 
       {portfolio.map((p) => (
         <div
