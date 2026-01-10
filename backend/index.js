@@ -188,8 +188,7 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   🌐 Polymarket SEARCH (NEW)
-   GET /polymarket/search?q=...
+   🌐 Polymarket SEARCH (unchanged)
 ================================ */
 app.get("/polymarket/search", async (req, res) => {
   try {
@@ -223,6 +222,52 @@ app.get("/polymarket/search", async (req, res) => {
   } catch (err) {
     console.error("Polymarket search failed:", err);
     res.status(500).json({ error: "Polymarket search failed" });
+  }
+});
+
+/* ===============================
+   🌐 Polymarket RESOLVE (NEW)
+   GET /polymarket/resolve?q=...
+================================ */
+app.get("/polymarket/resolve", async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q) {
+      return res.status(400).json({ error: "Missing query param q" });
+    }
+
+    const keywords = q
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 3);
+
+    for (const word of keywords) {
+      const searchRes = await fetch(
+        `https://gamma-api.polymarket.com/events?search=${encodeURIComponent(
+          word
+        )}`
+      );
+
+      const searchJson = await searchRes.json();
+      const event = searchJson?.data?.[0];
+
+      if (event && event.markets?.length) {
+        return res.json({
+          matched_on: word,
+          id: event.id,
+          title: event.title,
+          slug: event.slug,
+          endDate: event.endDate,
+          resolved: event.resolved,
+          market: event.markets[0],
+        });
+      }
+    }
+
+    res.status(404).json({ error: "No matching Polymarket event found" });
+  } catch (err) {
+    console.error("Polymarket resolve failed:", err);
+    res.status(500).json({ error: "Polymarket resolve failed" });
   }
 });
 
