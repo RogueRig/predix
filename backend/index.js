@@ -188,54 +188,41 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   🌐 Polymarket — SLUG → MARKET RESOLVER (PRODUCTION SAFE)
+   🌐 Polymarket SEARCH (NEW)
+   GET /polymarket/search?q=...
 ================================ */
-app.get("/polymarket/resolve", async (req, res) => {
+app.get("/polymarket/search", async (req, res) => {
   try {
-    const { slug } = req.query;
-    if (!slug) {
-      return res.status(400).json({ error: "Missing slug" });
+    const { q } = req.query;
+    if (!q) {
+      return res.status(400).json({ error: "Missing query param q" });
     }
 
-    // 1️⃣ Search event by slug/text
     const searchRes = await fetch(
       `https://gamma-api.polymarket.com/events?search=${encodeURIComponent(
-        slug
+        q
       )}`
     );
 
     const searchJson = await searchRes.json();
-    const event = searchJson?.data?.[0];
+    const events = searchJson?.data ?? [];
 
-    if (!event) {
-      return res.status(404).json({ error: "Event not found" });
-    }
-
-    const marketId = event.markets?.[0]?.id;
-    if (!marketId) {
-      return res.status(404).json({ error: "Market ID not found" });
-    }
-
-    // 2️⃣ Fetch market pricing from CLOB
-    const marketRes = await fetch(
-      `https://clob.polymarket.com/markets/${marketId}`
-    );
-
-    const market = await marketRes.json();
-
-    res.json({
-      slug,
-      question: event.title,
-      endDate: event.endDate,
-      market_id: marketId,
-      outcomes: market.outcomes?.map((o) => ({
-        name: o.name,
-        price: o.price,
+    const results = events.map((e) => ({
+      id: e.id,
+      title: e.title,
+      slug: e.slug,
+      endDate: e.endDate,
+      resolved: e.resolved,
+      markets: e.markets?.map((m) => ({
+        id: m.id,
+        outcomes: m.outcomes,
       })),
-    });
+    }));
+
+    res.json({ results });
   } catch (err) {
-    console.error("Polymarket resolve failed:", err);
-    res.status(500).json({ error: "Polymarket resolve failed" });
+    console.error("Polymarket search failed:", err);
+    res.status(500).json({ error: "Polymarket search failed" });
   }
 });
 
