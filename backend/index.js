@@ -1,6 +1,9 @@
 import express from "express";
 import cors from "cors";
 import { PrivyClient } from "@privy-io/server-auth";
+import pkg from "pg";
+
+const { Pool } = pkg;
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -10,6 +13,21 @@ const PORT = process.env.PORT || 10000;
 ================================ */
 app.use(cors());
 app.use(express.json());
+
+/* ===============================
+   Database
+================================ */
+if (!process.env.DATABASE_URL) {
+  console.error("❌ DATABASE_URL missing");
+  process.exit(1);
+}
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === "production"
+    ? { rejectUnauthorized: false }
+    : false,
+});
 
 /* ===============================
    Privy Server Client
@@ -28,7 +46,27 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   🔐 Privy Auth Middleware
+   Ensure Users Table
+================================ */
+async function ensureUsersTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      privy_user_id TEXT UNIQUE NOT NULL,
+      email TEXT,
+      wallet_address TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+}
+
+ensureUsersTable().catch((err) => {
+  console.error("❌ Failed creating users table:", err);
+  process.exit(1);
+});
+
+/* ===============================
+   🔐 Privy Auth + DB User
 ================================ */
 async function requirePrivyAuth(req, res, next) {
   try {
@@ -42,15 +80,32 @@ async function requirePrivyAuth(req, res, next) {
 
     const token = authHeader.replace("Bearer ", "");
 
-    // ✅ OFFICIAL PRIVY VERIFICATION
+    // ✅ Verify with Privy
     const verified = await privy.verifyAuthToken(token);
 
-    // Attach verified user to request
-    req.user = verified;
+    const privyUserId = verified.userId;
+    const email = verified.email ?? null;
+    const wallet = verified.wallet?.address ?? null;
 
+    // 🔍 Find or create DB user
+    const { rows } = await pool.query(
+      `
+      INSERT INTO users (privy_user_id, email, wallet_address)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (privy_user_id)
+      DO UPDATE SET
+        email = EXCLUDED.email,
+        wallet_address = EXCLUDED.wallet_address
+      RETURNING *;
+      `,
+      [privyUserId, email, wallet]
+    );
+
+    // Attach DB-backed user
+    req.user = rows[0];
     next();
   } catch (err) {
-    console.error("❌ Privy verification failed:", err.message);
+    console.error("❌ Auth failed:", err.message);
     return res.status(401).json({
       error: "Invalid Privy token",
     });
@@ -58,17 +113,12 @@ async function requirePrivyAuth(req, res, next) {
 }
 
 /* ===============================
-   Auth Route (Privy)
-   Diagnostic / optional
+   Auth Diagnostic
 ================================ */
 app.post("/auth/privy", requirePrivyAuth, (req, res) => {
-  const verified = req.user;
-
-  return res.json({
+  res.json({
     ok: true,
-    userId: verified.userId,
-    wallet: verified.wallet?.address ?? null,
-    email: verified.email ?? null,
+    user: req.user,
   });
 });
 
@@ -76,14 +126,8 @@ app.post("/auth/privy", requirePrivyAuth, (req, res) => {
    ✅ Canonical User Endpoint
 ================================ */
 app.get("/me", requirePrivyAuth, (req, res) => {
-  const verified = req.user;
-
-  return res.json({
-    user: {
-      id: verified.userId,
-      email: verified.email ?? null,
-      wallet: verified.wallet?.address ?? null,
-    },
+  res.json({
+    user: req.user,
   });
 });
 
