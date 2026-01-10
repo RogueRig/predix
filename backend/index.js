@@ -53,24 +53,61 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   DB MIGRATION (FIX UUID ISSUE)
+   🔧 CRITICAL DB MIGRATION
 ================================ */
 async function migrate() {
-  // 1️⃣ Enable UUID support
+  // 1️⃣ Enable UUID generation
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 
-  // 2️⃣ Create users table correctly
+  // 2️⃣ Ensure table exists (no schema assumptions)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      privy_user_id TEXT UNIQUE NOT NULL,
+      id UUID,
+      privy_user_id TEXT UNIQUE,
       email TEXT,
       wallet_address TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
 
-  console.log("✅ Database schema verified");
+  // 3️⃣ Backfill NULL ids (if any)
+  await pool.query(`
+    UPDATE users
+    SET id = gen_random_uuid()
+    WHERE id IS NULL;
+  `);
+
+  // 4️⃣ Set DEFAULT for future inserts
+  await pool.query(`
+    ALTER TABLE users
+    ALTER COLUMN id SET DEFAULT gen_random_uuid();
+  `);
+
+  // 5️⃣ Enforce NOT NULL + PK
+  await pool.query(`
+    ALTER TABLE users
+    ALTER COLUMN id SET NOT NULL;
+  `);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'users_pkey'
+      ) THEN
+        ALTER TABLE users ADD PRIMARY KEY (id);
+      END IF;
+    END$$;
+  `);
+
+  // 6️⃣ Enforce privy_user_id NOT NULL
+  await pool.query(`
+    ALTER TABLE users
+    ALTER COLUMN privy_user_id SET NOT NULL;
+  `);
+
+  console.log("✅ Database migration complete");
 }
 
 await migrate();
@@ -87,10 +124,8 @@ app.post("/auth/privy", async (req, res) => {
 
     const privyToken = auth.replace("Bearer ", "");
 
-    // ✅ Correct verification
     const verified = await privy.verifyAuthToken(privyToken);
 
-    // ✅ Upsert user (UUID now auto-generates correctly)
     const { rows } = await pool.query(
       `
       INSERT INTO users (privy_user_id, email, wallet_address)
@@ -110,7 +145,6 @@ app.post("/auth/privy", async (req, res) => {
 
     const user = rows[0];
 
-    // ✅ Issue backend JWT
     const backendToken = jwt.sign(
       { uid: user.id },
       process.env.BACKEND_JWT_SECRET,
