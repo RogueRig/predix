@@ -50,7 +50,7 @@ function LoginPage() {
 }
 
 /* ===============================
-   📊 Portfolio Page (STABLE)
+   📊 Portfolio Page (TS-SAFE)
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
@@ -69,10 +69,10 @@ function PortfolioPage() {
 
       try {
         // 1️⃣ Try existing backend token
-        let backendToken = localStorage.getItem("backend_token");
+        let storedToken = localStorage.getItem("backend_token");
 
         // 2️⃣ If missing → exchange Privy token
-        if (!backendToken) {
+        if (!storedToken) {
           let privyToken: string | null = null;
 
           for (let i = 0; i < 10; i++) {
@@ -101,9 +101,12 @@ function PortfolioPage() {
             throw new Error("Backend auth failed");
           }
 
-          backendToken = authJson.token;
-          localStorage.setItem("backend_token", backendToken);
+          storedToken = authJson.token;
+          localStorage.setItem("backend_token", storedToken);
         }
+
+        // 🔒 TypeScript-safe narrowing
+        const backendToken: string = storedToken;
 
         // 3️⃣ Call /me using BACKEND JWT
         const meRes = await fetch(
