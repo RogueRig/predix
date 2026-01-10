@@ -16,8 +16,10 @@ app.use(cors());
 app.use(express.json());
 
 /* ===============================
-   ENV
+   ENV CHECK
 ================================ */
+console.log("🔐 PRIVY_APP_ID:", process.env.PRIVY_APP_ID);
+
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL missing");
   process.exit(1);
@@ -45,7 +47,7 @@ const pool = new Pool({
 });
 
 /* ===============================
-   Privy
+   Privy Client
 ================================ */
 const privy = new PrivyClient(
   process.env.PRIVY_APP_ID,
@@ -55,36 +57,45 @@ const privy = new PrivyClient(
 /* ===============================
    DB Migration
 ================================ */
-async function ensureUsersSchema() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      privy_user_id TEXT UNIQUE NOT NULL,
-      email TEXT,
-      wallet_address TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-}
-
-await ensureUsersSchema();
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    privy_user_id TEXT UNIQUE NOT NULL,
+    email TEXT,
+    wallet_address TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`);
 
 /* ===============================
-   🔐 Privy → Backend Exchange
+   🔐 Privy → Backend Exchange (DEBUG)
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
+    console.log("➡️ /auth/privy called");
+
     if (!auth || !auth.startsWith("Bearer ")) {
+      console.error("❌ Missing Authorization header");
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
     const privyToken = auth.replace("Bearer ", "");
 
-    // ✅ CORRECT: verify FRONTEND auth token
-    const verified = await privy.verifyAuthToken(privyToken);
+    console.log("🔑 Token length:", privyToken.length);
+    console.log("🔑 Token prefix:", privyToken.slice(0, 20));
 
-    // Upsert user
+    let verified;
+    try {
+      verified = await privy.verifyAuthToken(privyToken);
+    } catch (e) {
+      console.error("❌ Privy verifyAuthToken failed");
+      console.error(e);
+      throw e;
+    }
+
+    console.log("✅ Privy verified:", verified);
+
     const { rows } = await pool.query(
       `
       INSERT INTO users (privy_user_id, email, wallet_address)
@@ -104,7 +115,6 @@ app.post("/auth/privy", async (req, res) => {
 
     const user = rows[0];
 
-    // Issue backend JWT
     const backendToken = jwt.sign(
       { uid: user.id },
       process.env.BACKEND_JWT_SECRET,
@@ -113,48 +123,13 @@ app.post("/auth/privy", async (req, res) => {
 
     return res.json({
       token: backendToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        wallet: user.wallet_address,
-      },
+      user,
     });
   } catch (err) {
-    console.error("Backend auth failed:", err);
+    console.error("🔥 BACKEND AUTH FAILED");
+    console.error(err);
     return res.status(401).json({ error: "Backend auth failed" });
   }
-});
-
-/* ===============================
-   🔒 Backend JWT Guard
-================================ */
-function requireBackendAuth(req, res, next) {
-  try {
-    const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Missing Authorization header" });
-    }
-
-    const token = auth.replace("Bearer ", "");
-    const payload = jwt.verify(token, process.env.BACKEND_JWT_SECRET);
-
-    req.userId = payload.uid;
-    next();
-  } catch {
-    return res.status(401).json({ error: "Invalid backend token" });
-  }
-}
-
-/* ===============================
-   /me
-================================ */
-app.get("/me", requireBackendAuth, async (req, res) => {
-  const { rows } = await pool.query(
-    "SELECT id, email, wallet_address FROM users WHERE id = $1",
-    [req.userId]
-  );
-
-  return res.json({ user: rows[0] });
 });
 
 /* ===============================
