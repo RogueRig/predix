@@ -49,42 +49,36 @@ function LoginPage() {
   );
 }
 
-/* ===============================
-   📊 Portfolio Page (CORRECT FLOW)
-================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
   const [output, setOutput] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
+  const backendTokenRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
 
-    async function runAuthFlow() {
+    async function bootstrapSession() {
       if (!ready || !authenticated) return;
 
       setLoading(true);
       setOutput(null);
 
-      // 1️⃣ Get Privy token
-      let privyToken: string | null = null;
-      for (let i = 0; i < 10; i++) {
-        privyToken = await getAccessToken();
-        if (privyToken) break;
-        await new Promise((r) => setTimeout(r, 300));
-      }
-
-      if (!privyToken) {
-        if (!cancelled) {
-          setOutput({ error: "Privy token not available" });
-          setLoading(false);
-        }
-        return;
-      }
-
       try {
-        // 2️⃣ Exchange Privy token → backend token
+        // 1️⃣ Get Privy token
+        let privyToken: string | null = null;
+        for (let i = 0; i < 10; i++) {
+          privyToken = await getAccessToken();
+          if (privyToken) break;
+          await new Promise((r) => setTimeout(r, 300));
+        }
+
+        if (!privyToken) {
+          throw new Error("Privy token unavailable");
+        }
+
+        // 2️⃣ Exchange for backend JWT
         const authRes = await fetch(
           "https://predix-backend.onrender.com/auth/privy",
           {
@@ -101,43 +95,37 @@ function PortfolioPage() {
           throw new Error("Backend auth failed");
         }
 
-        const backendJwt = authJson.token;
+        backendTokenRef.current = authJson.token;
 
-        // 3️⃣ Call /me with BACKEND token
+        // 3️⃣ Call /me using BACKEND token
         const meRes = await fetch(
           "https://predix-backend.onrender.com/me",
           {
             headers: {
-              Authorization: `Bearer ${backendJwt}`,
+              Authorization: `Bearer ${backendTokenRef.current}`,
             },
           }
         );
 
-        const meText = await meRes.text();
-        let parsed;
-        try {
-          parsed = JSON.parse(meText);
-        } catch {
-          parsed = meText;
+        const meJson = await meRes.json();
+
+        if (!meRes.ok) {
+          throw new Error("Failed to load profile");
         }
 
         if (!cancelled) {
-          setOutput({
-            httpStatus: meRes.status,
-            ok: meRes.ok,
-            response: parsed,
-          });
+          setOutput(meJson);
         }
       } catch (err: any) {
         if (!cancelled) {
-          setOutput({ error: err.message ?? "Unknown error" });
+          setOutput({ error: err.message });
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
-    runAuthFlow();
+    bootstrapSession();
     return () => {
       cancelled = true;
     };
@@ -147,7 +135,7 @@ function PortfolioPage() {
     <div style={{ padding: 20, fontFamily: "system-ui" }}>
       <h1>Predix Portfolio</h1>
 
-      {loading && <p>Loading profile…</p>}
+      {loading && <p>Loading session…</p>}
 
       {output && (
         <pre
@@ -164,13 +152,6 @@ function PortfolioPage() {
       )}
 
       <div style={{ marginTop: 12 }}>
-        <button
-          onClick={() => window.location.reload()}
-          style={{ padding: 12, fontSize: 16, marginRight: 10 }}
-        >
-          Reload
-        </button>
-
         <button
           onClick={logout}
           style={{ padding: 12, fontSize: 16 }}
