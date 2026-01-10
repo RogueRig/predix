@@ -1,23 +1,58 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useNavigate,
+} from "react-router-dom";
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 
-function App() {
-  const {
-    login,
-    authenticated,
-    ready,
-    getAccessToken,
-    logout,
-  } = usePrivy();
+/* ===============================
+   🔐 Auth Guard
+================================ */
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { ready, authenticated } = usePrivy();
 
-  if (!ready) {
-    return <p>Loading Privy…</p>;
-  }
+  if (!ready) return <p>Loading Privy…</p>;
+
+  return authenticated ? <>{children}</> : <Navigate to="/" replace />;
+}
+
+/* ===============================
+   🔑 Login Page
+================================ */
+function LoginPage() {
+  const { login, ready, authenticated } = usePrivy();
+  const navigate = useNavigate();
+
+  React.useEffect(() => {
+    if (ready && authenticated) {
+      navigate("/portfolio");
+    }
+  }, [ready, authenticated, navigate]);
+
+  if (!ready) return <p>Loading Privy…</p>;
+
+  return (
+    <div style={{ padding: 20, fontFamily: "system-ui" }}>
+      <h1>Predix</h1>
+      <button onClick={login} style={{ padding: 12, fontSize: 16 }}>
+        Login with Privy
+      </button>
+    </div>
+  );
+}
+
+/* ===============================
+   📊 Portfolio (Protected)
+================================ */
+function PortfolioPage() {
+  const { logout, getAccessToken } = usePrivy();
 
   async function verifyBackendAuth() {
     try {
-      // ✅ Correct usage for your Privy SDK version
       const token = await getAccessToken();
 
       if (!token) {
@@ -52,35 +87,48 @@ function App() {
 
   return (
     <div style={{ padding: 20, fontFamily: "system-ui" }}>
-      <h1>Predix</h1>
+      <h1>Predix Portfolio</h1>
+      <p>✅ Logged in</p>
 
-      {!authenticated ? (
-        <button onClick={login} style={{ padding: 12, fontSize: 16 }}>
-          Login with Privy
-        </button>
-      ) : (
-        <>
-          <p>✅ Logged in</p>
+      <button
+        onClick={verifyBackendAuth}
+        style={{ padding: 12, fontSize: 16, marginRight: 10 }}
+      >
+        Verify Backend Auth
+      </button>
 
-          <button
-            onClick={verifyBackendAuth}
-            style={{ padding: 12, fontSize: 16, marginRight: 10 }}
-          >
-            Verify Backend Auth
-          </button>
-
-          <button
-            onClick={logout}
-            style={{ padding: 12, fontSize: 16 }}
-          >
-            Logout
-          </button>
-        </>
-      )}
+      <button onClick={logout} style={{ padding: 12, fontSize: 16 }}>
+        Logout
+      </button>
     </div>
   );
 }
 
+/* ===============================
+   🚀 App Root
+================================ */
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<LoginPage />} />
+        <Route
+          path="/portfolio"
+          element={
+            <ProtectedRoute>
+              <PortfolioPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+/* ===============================
+   🔌 Mount React
+================================ */
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <PrivyProvider
