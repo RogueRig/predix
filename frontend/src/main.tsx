@@ -130,39 +130,6 @@ function PortfolioPage() {
     };
   }, [ready, authenticated, getAccessToken]);
 
-  async function addTestPosition() {
-    const stored = localStorage.getItem("backend_token");
-    if (stored === null) return;
-
-    const authToken: string = stored;
-
-    await fetch("https://predix-backend.onrender.com/portfolio", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${authToken}`,
-      },
-      body: JSON.stringify({
-        market_id: "btc-2025",
-        outcome: "YES",
-        shares: 10,
-        avg_price: 0.62,
-      }),
-    });
-
-    const res = await fetch(
-      "https://predix-backend.onrender.com/portfolio",
-      {
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-        },
-      }
-    );
-
-    const json = await res.json();
-    setPortfolio(json.portfolio || []);
-  }
-
   /* ---------- totals ---------- */
   const totalPositions = portfolio.length;
   const totalShares = portfolio.reduce((sum, p) => sum + Number(p.shares), 0);
@@ -175,7 +142,7 @@ function PortfolioPage() {
     <div style={{ padding: 20 }}>
       <h1>Portfolio</h1>
 
-      {/* ✅ FIXED VISIBILITY TOTALS */}
+      {/* Totals */}
       <div
         style={{
           background: "#111",
@@ -197,7 +164,7 @@ function PortfolioPage() {
       {loading && <p>Loading portfolio…</p>}
 
       {!loading && portfolio.length === 0 && (
-        <p>No positions yet. Add one to get started.</p>
+        <p>No positions yet.</p>
       )}
 
       {portfolio.map((p) => (
@@ -222,15 +189,7 @@ function PortfolioPage() {
         </div>
       ))}
 
-      <button
-        onClick={addTestPosition}
-        disabled={loading}
-        style={{ marginTop: 12 }}
-      >
-        ➕ Add Test Position
-      </button>
-
-      <br /><br />
+      <br />
 
       <button
         onClick={() => {
