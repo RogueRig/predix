@@ -188,33 +188,115 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
+   🌐 Polymarket SEARCH (READ-ONLY)
+   GET /polymarket/search?q=...
+================================ */
+app.get("/polymarket/search", async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q) {
+      return res.status(400).json({ error: "Missing query param q" });
+    }
+
+    const r = await fetch(
+      `https://gamma-api.polymarket.com/events?search=${encodeURIComponent(
+        q
+      )}`
+    );
+
+    const j = await r.json();
+    const events = j?.data ?? [];
+
+    res.json({
+      results: events.map((e) => ({
+        id: e.id,
+        title: e.title,
+        slug: e.slug,
+        endDate: e.endDate,
+        resolved: e.resolved,
+        markets: e.markets?.map((m) => ({
+          id: m.id,
+          outcomes: m.outcomes,
+        })),
+      })),
+    });
+  } catch (err) {
+    console.error("Polymarket search failed:", err);
+    res.status(500).json({ error: "Polymarket search failed" });
+  }
+});
+
+/* ===============================
+   🌐 Polymarket RESOLVE BY URL
+   POST /polymarket/resolve-url
+   { "url": "https://polymarket.com/event/..." }
+================================ */
+app.post("/polymarket/resolve-url", async (req, res) => {
+  try {
+    const { url } = req.body;
+
+    if (!url || !url.includes("/event/")) {
+      return res.status(400).json({ error: "Invalid Polymarket URL" });
+    }
+
+    const slug = url.split("/event/")[1]?.split("?")[0];
+    if (!slug) {
+      return res.status(400).json({ error: "Could not extract slug" });
+    }
+
+    const eventRes = await fetch(
+      `https://gamma-api.polymarket.com/events?slug=${encodeURIComponent(
+        slug
+      )}`
+    );
+
+    const eventJson = await eventRes.json();
+    const event = eventJson?.data?.[0];
+
+    if (!event || !event.markets?.length) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const marketId = event.markets[0].id;
+
+    const marketRes = await fetch(
+      `https://clob.polymarket.com/markets/${marketId}`
+    );
+
+    if (!marketRes.ok) {
+      return res.status(404).json({ error: "Market not found" });
+    }
+
+    const market = await marketRes.json();
+
+    res.json({
+      slug,
+      event_id: event.id,
+      question: event.title,
+      endDate: event.endDate,
+      market_id: marketId,
+      outcomes: market.outcomes?.map((o) => ({
+        name: o.name,
+        price: o.price,
+      })),
+    });
+  } catch (err) {
+    console.error("Resolve URL failed:", err);
+    res.status(500).json({ error: "Resolve URL failed" });
+  }
+});
+
+/* ===============================
    🌐 Polymarket VALIDATE (LOCKED)
-   POST /polymarket/validate
 ================================ */
 app.post("/polymarket/validate", async (req, res) => {
   try {
-    let { marketId, url } = req.body;
+    const { marketId } = req.body;
 
-    if (!marketId && !url) {
-      return res
-        .status(400)
-        .json({ error: "marketId or url is required" });
+    if (!marketId) {
+      return res.status(400).json({ error: "marketId is required" });
     }
 
-    // Extract marketId from URL if provided
-    if (!marketId && url) {
-      if (!url.includes("polymarket.com")) {
-        return res.status(400).json({ error: "Invalid Polymarket URL" });
-      }
-
-      // URL must already contain marketId (frontend responsibility)
-      return res.status(400).json({
-        error:
-          "URL parsing not allowed. Frontend must supply explicit marketId.",
-      });
-    }
-
-    // Validate market via CLOB
     const marketRes = await fetch(
       `https://clob.polymarket.com/markets/${marketId}`
     );
