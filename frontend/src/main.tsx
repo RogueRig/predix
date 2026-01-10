@@ -47,7 +47,6 @@ function PortfolioPage() {
   const [portfolio, setPortfolio] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
 
-  /* ---------- LOAD PORTFOLIO ---------- */
   React.useEffect(() => {
     let cancelled = false;
 
@@ -131,23 +130,6 @@ function PortfolioPage() {
     };
   }, [ready, authenticated, getAccessToken]);
 
-  /* ---------- COMPUTED TOTALS ---------- */
-  const totals = React.useMemo(() => {
-    const totalPositions = portfolio.length;
-    const totalShares = portfolio.reduce(
-      (sum, p) => sum + Number(p.shares || 0),
-      0
-    );
-    const totalInvested = portfolio.reduce(
-      (sum, p) =>
-        sum + Number(p.shares || 0) * Number(p.avg_price || 0),
-      0
-    );
-
-    return { totalPositions, totalShares, totalInvested };
-  }, [portfolio]);
-
-  /* ---------- ADD TEST POSITION ---------- */
   async function addTestPosition() {
     const stored = localStorage.getItem("backend_token");
     if (stored === null) return;
@@ -181,29 +163,36 @@ function PortfolioPage() {
     setPortfolio(json.portfolio || []);
   }
 
+  /* ---------- totals ---------- */
+  const totalPositions = portfolio.length;
+  const totalShares = portfolio.reduce((sum, p) => sum + Number(p.shares), 0);
+  const totalInvested = portfolio.reduce(
+    (sum, p) => sum + Number(p.shares) * Number(p.avg_price),
+    0
+  );
+
   return (
     <div style={{ padding: 20 }}>
       <h1>Portfolio</h1>
 
-      {/* ===== TOTALS ===== */}
-      {!loading && (
-        <div
-          style={{
-            border: "1px solid #333",
-            borderRadius: 8,
-            padding: 12,
-            marginBottom: 16,
-            background: "#0b0b0b",
-          }}
-        >
-          <div><strong>Total Positions:</strong> {totals.totalPositions}</div>
-          <div><strong>Total Shares:</strong> {totals.totalShares}</div>
-          <div>
-            <strong>Total Invested:</strong>{" "}
-            {totals.totalInvested.toFixed(2)}
-          </div>
+      {/* ✅ FIXED VISIBILITY TOTALS */}
+      <div
+        style={{
+          background: "#111",
+          color: "#ffffff",
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 20,
+          fontSize: 16,
+          lineHeight: 1.6,
+        }}
+      >
+        <div><strong>Total Positions:</strong> {totalPositions}</div>
+        <div><strong>Total Shares:</strong> {totalShares}</div>
+        <div>
+          <strong>Total Invested:</strong> {totalInvested.toFixed(2)}
         </div>
-      )}
+      </div>
 
       {loading && <p>Loading portfolio…</p>}
 
@@ -216,9 +205,9 @@ function PortfolioPage() {
           key={p.id}
           style={{
             border: "1px solid #333",
-            borderRadius: 8,
-            padding: 12,
-            marginBottom: 12,
+            borderRadius: 10,
+            padding: 14,
+            marginBottom: 14,
             background: "#111",
             color: "#fff",
           }}
