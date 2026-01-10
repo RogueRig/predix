@@ -188,54 +188,44 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   🌐 Polymarket TOP MARKETS
-   (Discovery ONLY — Option C locked)
+   🌐 Polymarket TOP MARKETS (CLOB ONLY ✅)
+   GET /polymarket/clob-top
 ================================ */
-app.get("/polymarket/top", async (_req, res) => {
+app.get("/polymarket/clob-top", async (_req, res) => {
   try {
-    // 1️⃣ Fetch top markets by volume (Gamma)
-    const gammaRes = await fetch(
-      "https://gamma-api.polymarket.com/markets?order=volume&direction=desc&limit=20"
+    const r = await fetch(
+      "https://clob.polymarket.com/markets?active=true&limit=50"
     );
 
-    if (!gammaRes.ok) {
-      return res.status(502).json({ error: "Gamma unavailable" });
+    if (!r.ok) {
+      return res.status(502).json({ error: "CLOB unavailable" });
     }
 
-    const gammaJson = await gammaRes.json();
-    const marketsRaw = gammaJson?.data ?? [];
+    const j = await r.json();
+    const markets = j?.markets ?? [];
 
-    const markets = [];
-
-    // 2️⃣ Enrich with live prices from CLOB
-    for (const m of marketsRaw) {
-      const clobRes = await fetch(
-        `https://clob.polymarket.com/markets/${m.id}`
-      );
-
-      if (!clobRes.ok) continue;
-
-      const clob = await clobRes.json();
-
-      markets.push({
+    const top = markets
+      .filter((m) => !m.resolved)
+      .sort((a, b) => Number(b.liquidity) - Number(a.liquidity))
+      .slice(0, 20)
+      .map((m) => ({
         market_id: m.id,
-        question: m.question || m.title || null,
-        endDate: m.endDate,
-        volume: m.volume || 0,
-        outcomes: clob.outcomes?.map((o) => ({
+        liquidity: m.liquidity,
+        resolved: m.resolved,
+        outcomes: m.outcomes?.map((o) => ({
           name: o.name,
           price: o.price,
         })),
-      });
-    }
+        polymarket_url: `https://polymarket.com/market/${m.id}`,
+      }));
 
     res.json({
-      markets,
+      markets: top,
       asOf: new Date().toISOString(),
     });
   } catch (err) {
-    console.error("Polymarket top failed:", err);
-    res.status(500).json({ error: "Polymarket top failed" });
+    console.error("CLOB top failed:", err);
+    res.status(500).json({ error: "CLOB top failed" });
   }
 });
 
