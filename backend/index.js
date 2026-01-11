@@ -47,7 +47,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   SAFE MIGRATION
+   Migration
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -124,9 +124,9 @@ app.post("/auth/privy", async (req, res) => {
 });
 
 /* ===============================
-   JWT Guard
+   JWT Guard (FIXED – JS ONLY)
 ================================ */
-function requireBackendAuth(req: any, res: any, next: any) {
+function requireBackendAuth(req, res, next) {
   try {
     const auth = req.headers.authorization;
     if (!auth?.startsWith("Bearer ")) {
@@ -145,9 +145,9 @@ function requireBackendAuth(req: any, res: any, next: any) {
 }
 
 /* ===============================
-   DEV RESET (🔥 THIS IS NEW)
+   DEV RESET
 ================================ */
-app.post("/dev/reset", requireBackendAuth, async (req: any, res) => {
+app.post("/dev/reset", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
 
   try {
@@ -165,11 +165,7 @@ app.post("/dev/reset", requireBackendAuth, async (req: any, res) => {
 
     await client.query("COMMIT");
 
-    res.json({
-      ok: true,
-      balance: 1000,
-      message: "Account reset successful",
-    });
+    res.json({ ok: true, balance: 1000 });
   } catch (e) {
     await client.query("ROLLBACK");
     console.error(e);
@@ -182,7 +178,7 @@ app.post("/dev/reset", requireBackendAuth, async (req: any, res) => {
 /* ===============================
    BUY
 ================================ */
-app.post("/trade/buy", requireBackendAuth, async (req: any, res) => {
+app.post("/trade/buy", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
 
   try {
@@ -228,11 +224,7 @@ app.post("/trade/buy", requireBackendAuth, async (req: any, res) => {
 
     await client.query("COMMIT");
 
-    res.json({
-      status: "filled",
-      spent: cost,
-      remaining_balance: balance - cost,
-    });
+    res.json({ status: "filled", spent: cost });
   } catch (e) {
     await client.query("ROLLBACK");
     console.error(e);
@@ -245,7 +237,7 @@ app.post("/trade/buy", requireBackendAuth, async (req: any, res) => {
 /* ===============================
    Balance
 ================================ */
-app.get("/portfolio/meta", requireBackendAuth, async (req: any, res) => {
+app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `SELECT balance FROM users WHERE id = $1`,
     [req.userId]
@@ -257,7 +249,7 @@ app.get("/portfolio/meta", requireBackendAuth, async (req: any, res) => {
 /* ===============================
    Positions
 ================================ */
-app.get("/portfolio/positions", requireBackendAuth, async (req: any, res) => {
+app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `
     SELECT
