@@ -60,7 +60,7 @@ function Portfolio() {
   const [price, setPrice] = React.useState(1);
 
   /* ===============================
-     Tokens (STRICT)
+     Backend Token (STRICT)
   ================================ */
   async function getBackendToken(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
@@ -96,7 +96,7 @@ function Portfolio() {
   }
 
   /* ===============================
-     Load Portfolio (SINGLE ENDPOINT)
+     Load Portfolio
   ================================ */
   async function refreshPortfolio() {
     const token = await getBackendToken();
@@ -122,9 +122,9 @@ function Portfolio() {
   }, []);
 
   /* ===============================
-     Trade
+     Trade (BUY / SELL)
   ================================ */
-  async function trade(sharesSigned: number) {
+  async function trade(side: "buy" | "sell") {
     try {
       setError(null);
       setMessage(null);
@@ -138,12 +138,12 @@ function Portfolio() {
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
-            "Idempotency-Key": crypto.randomUUID(),
           },
           body: JSON.stringify({
             market_id: marketId,
             outcome,
-            shares: sharesSigned,
+            side,
+            shares,
             price,
           }),
         }
@@ -153,7 +153,7 @@ function Portfolio() {
       if (!res.ok) throw new Error(json.error || "Trade failed");
 
       setMessage(
-        sharesSigned > 0
+        side === "buy"
           ? `Bought ${shares} @ ${price}`
           : `Sold ${shares} @ ${price}`
       );
@@ -194,13 +194,21 @@ function Portfolio() {
         <option value="NO">NO</option>
       </select>
       <br />
-      <input type="number" value={shares} onChange={(e) => setShares(+e.target.value)} />
+      <input
+        type="number"
+        value={shares}
+        onChange={(e) => setShares(Number(e.target.value))}
+      />
       <br />
-      <input type="number" value={price} onChange={(e) => setPrice(+e.target.value)} />
+      <input
+        type="number"
+        value={price}
+        onChange={(e) => setPrice(Number(e.target.value))}
+      />
       <br />
 
-      <button onClick={() => trade(shares)}>Buy</button>
-      <button onClick={() => trade(-shares)} style={{ marginLeft: 10 }}>
+      <button onClick={() => trade("buy")}>Buy</button>
+      <button onClick={() => trade("sell")} style={{ marginLeft: 10 }}>
         Sell
       </button>
 
