@@ -103,44 +103,37 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     Refresh Balance
+     Sync from backend (SAFE)
   ================================ */
-  async function refreshBalance(token: string) {
-    const res = await fetch(
-      "https://predix-backend.onrender.com/portfolio/meta",
-      {
+  async function syncFromBackend(token: string) {
+    const [balRes, posRes] = await Promise.all([
+      fetch("https://predix-backend.onrender.com/portfolio/meta", {
         headers: { Authorization: `Bearer ${token}` },
-      }
+      }),
+      fetch("https://predix-backend.onrender.com/portfolio/positions", {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    ]);
+
+    const balJson = await balRes.json();
+    const posJson = await posRes.json();
+
+    setBalance(Number(balJson.balance) || 0);
+
+    const safePositions: Position[] = (posJson.positions || []).map(
+      (p: any) => ({
+        market_id: String(p.market_id),
+        outcome: String(p.outcome),
+        total_shares: Number(p.total_shares) || 0,
+        avg_price: Number(p.avg_price) || 0,
+      })
     );
-    const json = await res.json();
-    setBalance(Number(json.balance) || 0);
+
+    setPositions(safePositions);
   }
 
   /* ===============================
-     Refresh Positions (HARDENED)
-  ================================ */
-  async function refreshPositions(token: string) {
-    const res = await fetch(
-      "https://predix-backend.onrender.com/portfolio/positions",
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
-
-    const json = await res.json();
-
-    const safe: Position[] = (json.positions || []).map((p: any) => ({
-      market_id: String(p.market_id),
-      outcome: String(p.outcome),
-      total_shares: Number(p.total_shares) || 0,
-      avg_price: Number(p.avg_price) || 0,
-    }));
-
-    setPositions(safe);
-  }
-
-  /* ===============================
-     BUY
+     BUY (OPTIMISTIC + SYNC)
   ================================ */
   async function buy() {
     try {
@@ -170,11 +163,42 @@ function PortfolioPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Trade failed");
 
+      // ✅ IMMEDIATE UI UPDATE (NO RACE)
+      setBalance((b) => b - json.spent);
+
+      setPositions((prev) => {
+        const next = [...prev];
+        const idx = next.findIndex(
+          (p) => p.market_id === marketId && p.outcome === outcome
+        );
+
+        if (idx >= 0) {
+          const p = next[idx];
+          const totalCost =
+            p.total_shares * p.avg_price + shares * price;
+          const newShares = p.total_shares + shares;
+
+          next[idx] = {
+            ...p,
+            total_shares: newShares,
+            avg_price: totalCost / newShares,
+          };
+        } else {
+          next.push({
+            market_id: marketId,
+            outcome,
+            total_shares: shares,
+            avg_price: price,
+          });
+        }
+
+        return next;
+      });
+
       setMessage(`Bought ${shares} @ ${price}`);
 
-      // 🔒 SERIAL refresh — no race conditions
-      await refreshBalance(token);
-      await refreshPositions(token);
+      // 🔄 BACKGROUND SYNC (SOURCE OF TRUTH)
+      setTimeout(() => syncFromBackend(token), 300);
     } catch (e: any) {
       setError(e.message);
     }
@@ -185,8 +209,7 @@ function PortfolioPage() {
 
     (async () => {
       const token = await getBackendToken();
-      await refreshBalance(token);
-      await refreshPositions(token);
+      await syncFromBackend(token);
       setLoading(false);
     })();
   }, [ready, authenticated]);
@@ -228,11 +251,6 @@ function PortfolioPage() {
           </strong>
           <div>Shares: {p.total_shares}</div>
           <div>Avg Price: {p.avg_price.toFixed(4)}</div>
-
-          {/* SELL DISABLED UNTIL BACKEND SAFE */}
-          <button disabled style={{ opacity: 0.5 }}>
-            Sell (coming soon)
-          </button>
         </div>
       ))}
 
