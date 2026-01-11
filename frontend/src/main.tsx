@@ -56,10 +56,11 @@ function PortfolioPage() {
   const [shares, setShares] = React.useState(10);
   const [price, setPrice] = React.useState(1);
 
-  const requestVersion = React.useRef(0);
+  // ✅ CRITICAL FIX — prevents balance reset loops
+  const hasLoadedRef = React.useRef(false);
 
   /* ===============================
-     Backend Token
+     Backend Token (STRICT)
   ================================ */
   async function getBackendToken(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
@@ -95,45 +96,47 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     Unified Refresh (FIXED)
+     Balance
   ================================ */
-  async function refreshAll() {
-    const version = ++requestVersion.current;
+  async function refreshBalance() {
     const token = await getBackendToken();
-
-    const [balRes, posRes] = await Promise.all([
-      fetch("https://predix-backend.onrender.com/portfolio/meta", {
+    const res = await fetch(
+      "https://predix-backend.onrender.com/portfolio/meta",
+      {
         headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch("https://predix-backend.onrender.com/portfolio/positions", {
+      }
+    );
+
+    if (!res.ok) return;
+
+    const json = await res.json();
+    if (typeof json.balance === "number") {
+      setBalance(json.balance);
+    }
+  }
+
+  /* ===============================
+     Positions
+  ================================ */
+  async function refreshPositions() {
+    const token = await getBackendToken();
+    const res = await fetch(
+      "https://predix-backend.onrender.com/portfolio/positions",
+      {
         headers: { Authorization: `Bearer ${token}` },
-      }),
-    ]);
+      }
+    );
 
-    if (requestVersion.current !== version) return;
+    if (!res.ok) return;
 
-    if (balRes.ok) {
-      const b = await balRes.json();
-      const parsedBalance = Number(b.balance);
-      setBalance(Number.isFinite(parsedBalance) ? parsedBalance : 0);
-    }
-
-    if (posRes.ok) {
-      const p = await posRes.json();
-      setPositions(
-        (p.positions || []).map((x: any) => {
-          const shares = Number(x.total_shares);
-          const avg = Number(x.avg_price);
-
-          return {
-            market_id: x.market_id,
-            outcome: x.outcome,
-            total_shares: Number.isFinite(shares) ? shares : 0,
-            avg_price: Number.isFinite(avg) ? avg : 0,
-          };
-        })
-      );
-    }
+    const json = await res.json();
+    setPositions(
+      (json.positions || []).map((p: any) => ({
+        ...p,
+        total_shares: Number(p.total_shares),
+        avg_price: Number(p.avg_price),
+      }))
+    );
   }
 
   /* ===============================
@@ -168,18 +171,31 @@ function PortfolioPage() {
       if (!res.ok) throw new Error(json.error || "Trade failed");
 
       setMessage(`Bought ${shares} @ ${price}`);
-      await refreshAll();
+
+      await refreshPositions();
+      await refreshBalance();
     } catch (e: any) {
       setError(e.message);
     }
   }
 
   /* ===============================
-     Initial Load
+     Initial Load (RUNS ONCE ONLY)
   ================================ */
   React.useEffect(() => {
     if (!ready || !authenticated) return;
-    refreshAll().finally(() => setLoading(false));
+    if (hasLoadedRef.current) return;
+
+    hasLoadedRef.current = true;
+
+    (async () => {
+      try {
+        await refreshBalance();
+        await refreshPositions();
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [ready, authenticated]);
 
   if (loading) return <p style={{ padding: 20 }}>Loading…</p>;
@@ -216,7 +232,7 @@ function PortfolioPage() {
         </div>
       ))}
 
-      <h2>Buy</h2>
+      <h2>Buy (Paper)</h2>
 
       <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
       <br />
