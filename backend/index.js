@@ -18,40 +18,25 @@ app.use(express.json());
 /* ===============================
    ENV CHECK
 ================================ */
-function requireEnv(name) {
-  if (!process.env[name]) {
-    console.error(`${name} missing`);
+for (const v of [
+  "DATABASE_URL",
+  "BACKEND_JWT_SECRET",
+  "PRIVY_APP_ID",
+  "PRIVY_APP_SECRET",
+]) {
+  if (!process.env[v]) {
+    console.error(`${v} missing`);
     process.exit(1);
   }
 }
 
-requireEnv("DATABASE_URL");
-requireEnv("BACKEND_JWT_SECRET");
-requireEnv("PRIVY_APP_ID");
-requireEnv("PRIVY_APP_SECRET");
-
 /* ===============================
-   Database (HARDENED FOR RENDER)
+   Database
 ================================ */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
-  max: 3,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
 });
-
-/* ---- Verify DB on boot ---- */
-async function verifyDb() {
-  try {
-    const r = await pool.query("SELECT 1");
-    console.log("✅ Database connected");
-  } catch (err) {
-    console.error("❌ Database connection failed");
-    console.error(err);
-    process.exit(1);
-  }
-}
 
 /* ===============================
    Privy
@@ -62,7 +47,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Database Migration (SAFE, DEV-ONLY)
+   Migration (SAFE)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -92,8 +77,10 @@ async function migrate() {
     );
   `);
 
-  console.log("✅ Database migration complete");
+  console.log("✅ Migration complete");
 }
+
+await migrate();
 
 /* ===============================
    Auth
@@ -102,21 +89,17 @@ app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
     if (!auth?.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Missing Authorization header" });
+      return res.status(401).json({ error: "Missing auth header" });
     }
 
-    const verified = await privy.verifyAuthToken(
-      auth.replace("Bearer ", "")
-    );
+    const verified = await privy.verifyAuthToken(auth.replace("Bearer ", ""));
 
     const { rows } = await pool.query(
       `
       INSERT INTO users (privy_user_id, email, wallet_address)
-      VALUES ($1, $2, $3)
+      VALUES ($1,$2,$3)
       ON CONFLICT (privy_user_id)
-      DO UPDATE SET
-        email = EXCLUDED.email,
-        wallet_address = EXCLUDED.wallet_address
+      DO UPDATE SET email=EXCLUDED.email
       RETURNING id;
       `,
       [
@@ -133,14 +116,14 @@ app.post("/auth/privy", async (req, res) => {
     );
 
     res.json({ token });
-  } catch (err) {
-    console.error("Auth failed:", err);
-    res.status(401).json({ error: "Backend auth failed" });
+  } catch (e) {
+    console.error(e);
+    res.status(401).json({ error: "Auth failed" });
   }
 });
 
 /* ===============================
-   JWT Guard (NO HTML EVER)
+   JWT Guard
 ================================ */
 function requireBackendAuth(req, res, next) {
   try {
@@ -148,79 +131,78 @@ function requireBackendAuth(req, res, next) {
     if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
-
     const decoded = jwt.verify(
       auth.replace("Bearer ", ""),
       process.env.BACKEND_JWT_SECRET
     );
-
     req.userId = decoded.uid;
     next();
-  } catch (err) {
-    return res.status(401).json({ error: "Invalid backend token" });
+  } catch (e) {
+    return res.status(401).json({ error: "Invalid token" });
   }
 }
 
 /* ===============================
-   BUY TRADE (DEV-SAFE)
+   BUY — DIAGNOSTIC MODE
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
 
   try {
-    const key = req.headers["idempotency-key"];
-    if (typeof key !== "string") {
-      return res.status(400).json({ error: "Missing Idempotency-Key" });
+    const idKey = req.headers["idempotency-key"];
+    if (typeof idKey !== "string") {
+      return res.status(400).json({
+        step: "header",
+        error: "Missing Idempotency-Key",
+      });
     }
 
     const { market_id, outcome, shares, price } = req.body;
 
     if (!market_id || !outcome || !shares || !price) {
-      return res.status(400).json({ error: "Invalid payload", body: req.body });
+      return res.status(400).json({
+        step: "payload",
+        error: "Invalid payload",
+        body: req.body,
+      });
     }
-
-    const cost = Number(shares) * Number(price);
 
     await client.query("BEGIN");
 
-    const balRes = await client.query(
+    const userRes = await client.query(
       `SELECT balance FROM users WHERE id = $1 FOR UPDATE`,
       [req.userId]
     );
 
-    if (!balRes.rows.length) {
+    if (userRes.rows.length === 0) {
       await client.query("ROLLBACK");
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({
+        step: "user_lookup",
+        error: "User row not found",
+        userId: req.userId,
+      });
     }
 
-    const balance = Number(balRes.rows[0].balance);
+    const balance = Number(userRes.rows[0].balance);
+    const cost = Number(shares) * Number(price);
 
     if (balance < cost) {
       await client.query("ROLLBACK");
       return res.status(400).json({
+        step: "balance_check",
         error: "Insufficient balance",
         balance,
         cost,
       });
     }
 
-    const dup = await client.query(
-      `SELECT 1 FROM portfolios WHERE user_id = $1 AND idempotency_key = $2`,
-      [req.userId, key]
-    );
-
-    if (dup.rows.length) {
-      await client.query("ROLLBACK");
-      return res.json({ status: "duplicate_ignored" });
-    }
-
     await client.query(
       `
       INSERT INTO portfolios
       (user_id, market_id, outcome, shares, avg_price, idempotency_key)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      VALUES ($1,$2,$3,$4,$5,$6)
       `,
-      [req.userId, market_id, outcome, shares, price, key]
+      [req.userId, market_id, outcome, shares, price, idKey]
     );
 
     await client.query(
@@ -231,16 +213,16 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
     await client.query("COMMIT");
 
     res.json({
-      status: "filled",
+      status: "ok",
       spent: cost,
-      remaining_balance: balance - cost,
+      remaining: balance - cost,
     });
-  } catch (err) {
+  } catch (e) {
     await client.query("ROLLBACK");
-    console.error("BUY ERROR:", err);
+    console.error(e);
     res.status(500).json({
-      error: "Trade failed",
-      message: err instanceof Error ? err.message : String(err),
+      step: "exception",
+      error: e.message,
     });
   } finally {
     client.release();
@@ -248,39 +230,23 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Portfolio Meta
+   Balance
 ================================ */
 app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT balance FROM users WHERE id = $1`,
-      [req.userId]
-    );
-
-    if (!rows.length) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    res.json({ balance: Number(rows[0].balance) });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to load balance" });
-  }
+  const { rows } = await pool.query(
+    `SELECT balance FROM users WHERE id = $1`,
+    [req.userId]
+  );
+  res.json({ balance: Number(rows[0]?.balance ?? 0) });
 });
 
 /* ===============================
    Health
 ================================ */
 app.get("/", (_, res) => {
-  res.json({ status: "ok" });
+  res.json({ ok: true });
 });
 
-/* ===============================
-   Boot
-================================ */
-await verifyDb();
-await migrate();
-
 app.listen(PORT, () => {
-  console.log(`🚀 Backend running on ${PORT}`);
+  console.log("🚀 Backend running");
 });
