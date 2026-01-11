@@ -42,8 +42,8 @@ const pool = new Pool({
    Privy
 ================================ */
 const privy = new PrivyClient(
-  process.env.PRIVY_APP_ID,
-  process.env.PRIVY_APP_SECRET
+  process.env.PRIVY_APP_ID!,
+  process.env.PRIVY_APP_SECRET!
 );
 
 /* ===============================
@@ -55,9 +55,8 @@ async function migrate() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      privy_user_id TEXT UNIQUE NOT NULL,
+      wallet_address TEXT UNIQUE NOT NULL,
       email TEXT,
-      wallet_address TEXT,
       balance NUMERIC NOT NULL DEFAULT 1000,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
@@ -82,7 +81,7 @@ async function migrate() {
 await migrate();
 
 /* ===============================
-   Auth
+   AUTH (WALLET-LOCKED)
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
@@ -95,24 +94,25 @@ app.post("/auth/privy", async (req, res) => {
       auth.replace("Bearer ", "")
     );
 
+    const wallet = verified.wallet?.address;
+    if (!wallet) {
+      return res.status(400).json({ error: "Wallet required" });
+    }
+
     const { rows } = await pool.query(
       `
-      INSERT INTO users (privy_user_id, email, wallet_address)
-      VALUES ($1,$2,$3)
-      ON CONFLICT (privy_user_id)
+      INSERT INTO users (wallet_address, email)
+      VALUES ($1,$2)
+      ON CONFLICT (wallet_address)
       DO UPDATE SET email = EXCLUDED.email
       RETURNING id;
       `,
-      [
-        verified.userId,
-        verified.email ?? null,
-        verified.wallet?.address ?? null,
-      ]
+      [wallet.toLowerCase(), verified.email ?? null]
     );
 
     const token = jwt.sign(
       { uid: rows[0].id },
-      process.env.BACKEND_JWT_SECRET,
+      process.env.BACKEND_JWT_SECRET!,
       { expiresIn: "7d" }
     );
 
@@ -124,9 +124,9 @@ app.post("/auth/privy", async (req, res) => {
 });
 
 /* ===============================
-   JWT Guard
+   JWT GUARD
 ================================ */
-function requireBackendAuth(req, res, next) {
+function requireBackendAuth(req: any, res: any, next: any) {
   try {
     const auth = req.headers.authorization;
     if (!auth?.startsWith("Bearer ")) {
@@ -135,7 +135,7 @@ function requireBackendAuth(req, res, next) {
 
     req.userId = jwt.verify(
       auth.replace("Bearer ", ""),
-      process.env.BACKEND_JWT_SECRET
+      process.env.BACKEND_JWT_SECRET!
     ).uid;
 
     next();
@@ -208,32 +208,21 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   DEV ONLY: RESET BALANCE
+   BALANCE
 ================================ */
-app.post("/dev/reset-balance", requireBackendAuth, async (req, res) => {
-  await pool.query(
-    `UPDATE users SET balance = 1000 WHERE id = $1`,
-    [req.userId]
-  );
-
-  res.json({ ok: true, balance: 1000 });
-});
-
-/* ===============================
-   Balance
-================================ */
-app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
+app.get("/portfolio/meta", requireBackendAuth, async (req: any, res) => {
   const { rows } = await pool.query(
     `SELECT balance FROM users WHERE id = $1`,
     [req.userId]
   );
+
   res.json({ balance: Number(rows[0]?.balance ?? 0) });
 });
 
 /* ===============================
-   Positions
+   POSITIONS (AGGREGATED)
 ================================ */
-app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
+app.get("/portfolio/positions", requireBackendAuth, async (req: any, res) => {
   const { rows } = await pool.query(
     `
     SELECT
@@ -257,12 +246,12 @@ app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Health
+   HEALTH
 ================================ */
 app.get("/", (_, res) => {
   res.json({ ok: true });
 });
 
 app.listen(PORT, () => {
-  console.log("🚀 Backend running");
+  console.log("🚀 Backend running (wallet-locked identity)");
 });
