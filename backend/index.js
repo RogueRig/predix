@@ -17,10 +17,9 @@ app.use(
   cors({
     origin: "*",
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
-app.options("*", cors());
 app.use(express.json());
 
 /* ===============================
@@ -55,7 +54,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   MIGRATION (HARD FIX)
+   MIGRATION (SAFE)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -83,36 +82,8 @@ async function migrate() {
     );
   `);
 
-  /* 🔥 HARD RESET OF BROKEN TRADES TABLE */
-  await pool.query(`
-    DO $$
-    BEGIN
-      IF EXISTS (
-        SELECT 1 FROM information_schema.tables
-        WHERE table_name = 'trades'
-      ) THEN
-        ALTER TABLE trades RENAME TO trades_legacy;
-      END IF;
-    END $$;
-  `);
-
-  await pool.query(`
-    CREATE TABLE trades (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      market_id TEXT NOT NULL,
-      outcome TEXT NOT NULL,
-      side TEXT CHECK (side IN ('buy','sell')),
-      shares NUMERIC NOT NULL,
-      price NUMERIC NOT NULL,
-      realized_pnl NUMERIC NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-
-  console.log("✅ Database schema repaired (trades rebuilt)");
+  console.log("✅ Database ready");
 }
-
 await migrate();
 
 /* ===============================
@@ -181,14 +152,12 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   Trade
+   TRADE (BUY / SELL) — FIXED
 ================================ */
 app.post("/trade", requireBackendAuth, async (req, res) => {
-  const { market_id, outcome, shares, price } = req.body;
-  const side = shares > 0 ? "buy" : "sell";
-  const qty = Math.abs(Number(shares));
+  const { market_id, outcome, side, shares, price } = req.body;
 
-  if (!market_id || !outcome || !qty || !price) {
+  if (!market_id || !outcome || !side || !shares || !price) {
     return res.status(400).json({ error: "Invalid payload" });
   }
 
@@ -201,7 +170,7 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
       `
       SELECT shares, avg_price
       FROM positions
-      WHERE user_id=$1 AND market_id=$2 AND outcome=$3
+      WHERE user_id = $1 AND market_id = $2 AND outcome = $3
       FOR UPDATE
       `,
       [req.userId, market_id, outcome]
@@ -216,37 +185,67 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
           INSERT INTO positions (user_id, market_id, outcome, shares, avg_price)
           VALUES ($1,$2,$3,$4,$5)
           `,
-          [req.userId, market_id, outcome, qty, price]
+          [req.userId, market_id, outcome, shares, price]
         );
       } else {
         const cur = posRes.rows[0];
-        const newShares = Number(cur.shares) + qty;
+        const newShares = Number(cur.shares) + Number(shares);
         const newAvg =
-          (Number(cur.shares) * Number(cur.avg_price) + qty * price) /
+          (Number(cur.shares) * Number(cur.avg_price) +
+            Number(shares) * Number(price)) /
           newShares;
 
         await client.query(
           `
           UPDATE positions
-          SET shares=$1, avg_price=$2
-          WHERE user_id=$3 AND market_id=$4 AND outcome=$5
+          SET shares = $1, avg_price = $2
+          WHERE user_id = $3 AND market_id = $4 AND outcome = $5
           `,
           [newShares, newAvg, req.userId, market_id, outcome]
         );
       }
+    } else if (side === "sell") {
+      if (posRes.rows.length === 0 || Number(posRes.rows[0].shares) < shares) {
+        throw new Error("Insufficient shares");
+      }
+
+      const cur = posRes.rows[0];
+      realizedPnl =
+        (Number(price) - Number(cur.avg_price)) * Number(shares);
+
+      const remaining = Number(cur.shares) - Number(shares);
+
+      if (remaining === 0) {
+        await client.query(
+          `
+          DELETE FROM positions
+          WHERE user_id = $1 AND market_id = $2 AND outcome = $3
+          `,
+          [req.userId, market_id, outcome]
+        );
+      } else {
+        await client.query(
+          `
+          UPDATE positions
+          SET shares = $1
+          WHERE user_id = $2 AND market_id = $3 AND outcome = $4
+          `,
+          [remaining, req.userId, market_id, outcome]
+        );
+      }
+
+      await client.query(
+        `
+        UPDATE users
+        SET realized_pnl = realized_pnl + $1
+        WHERE id = $2
+        `,
+        [realizedPnl, req.userId]
+      );
     }
 
-    await client.query(
-      `
-      INSERT INTO trades
-      (user_id, market_id, outcome, side, shares, price, realized_pnl)
-      VALUES ($1,$2,$3,$4,$5,$6,$7)
-      `,
-      [req.userId, market_id, outcome, side, qty, price, realizedPnl]
-    );
-
     await client.query("COMMIT");
-    res.json({ ok: true });
+    res.json({ ok: true, realized_pnl: realizedPnl });
   } catch (e) {
     await client.query("ROLLBACK");
     res.status(400).json({ error: e.message });
@@ -256,30 +255,34 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Portfolio
+   PORTFOLIO
 ================================ */
 app.get("/portfolio", requireBackendAuth, async (req, res) => {
   const posRes = await pool.query(
-    `SELECT market_id, outcome, shares, avg_price FROM positions WHERE user_id=$1`,
+    `
+    SELECT market_id, outcome, shares, avg_price
+    FROM positions
+    WHERE user_id = $1
+    `,
     [req.userId]
   );
 
   const userRes = await pool.query(
-    `SELECT realized_pnl FROM users WHERE id=$1`,
+    `SELECT realized_pnl FROM users WHERE id = $1`,
     [req.userId]
   );
 
-  let unrealized = 0;
+  let unrealizedPnl = 0;
   let invested = 0;
 
   const positions = posRes.rows.map((p) => {
     const price = getMarketPrice(p.market_id, p.outcome);
-    const value = p.shares * price;
-    const cost = p.shares * p.avg_price;
+    const value = Number(p.shares) * price;
+    const cost = Number(p.shares) * Number(p.avg_price);
     const u = value - cost;
 
     invested += cost;
-    unrealized += u;
+    unrealizedPnl += u;
 
     return {
       market_id: p.market_id,
@@ -292,13 +295,13 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
     };
   });
 
-  const realized = Number(userRes.rows[0]?.realized_pnl ?? 0);
-  const balance = STARTING_BALANCE + realized - invested;
+  const realizedPnl = Number(userRes.rows[0]?.realized_pnl ?? 0);
+  const balance = STARTING_BALANCE + realizedPnl - invested;
 
   res.json({
     balance,
-    realized_pnl: realized,
-    unrealized_pnl: unrealized,
+    realized_pnl: realizedPnl,
+    unrealized_pnl: unrealizedPnl,
     positions,
   });
 });
@@ -308,4 +311,6 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 ================================ */
 app.get("/", (_, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => console.log("🚀 Backend running"));
+app.listen(PORT, () => {
+  console.log("🚀 Backend running");
+});
