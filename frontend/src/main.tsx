@@ -45,26 +45,22 @@ function LoginPage() {
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
-  const tokenRef = React.useRef<string | null>(null);
-
   const [balance, setBalance] = React.useState<number>(0);
   const [loading, setLoading] = React.useState<boolean>(true);
 
-  /* ===============================
-     Bootstrap (ABSOLUTELY NULL SAFE)
-  ================================ */
   React.useEffect(() => {
     let cancelled = false;
 
-    async function bootstrap() {
+    async function bootstrap(): Promise<void> {
       if (!ready || !authenticated) return;
 
       try {
         setLoading(true);
 
-        let token: string | null = localStorage.getItem("backend_token");
+        // 🔒 STEP 1: force backend token to be string OR throw
+        let backendToken = localStorage.getItem("backend_token");
 
-        if (token === null) {
+        if (backendToken === null) {
           let privyToken: string | null = null;
 
           for (let i = 0; i < 10; i++) {
@@ -96,29 +92,48 @@ function PortfolioPage() {
             !authRes.ok ||
             typeof authJson !== "object" ||
             authJson === null ||
-            typeof (authJson as any).token !== "string"
+            typeof (authJson as { token?: unknown }).token !== "string"
           ) {
             throw new Error("Backend auth failed");
           }
 
-          token = (authJson as any).token;
-          localStorage.setItem("backend_token", token);
+          backendToken = (authJson as { token: string }).token;
+          localStorage.setItem("backend_token", backendToken);
         }
 
-        // 🔒 FINAL HARD GUARANTEE
-        if (typeof token !== "string") {
+        // 🔒 STEP 2: HARD TYPE NARROWING
+        if (typeof backendToken !== "string") {
           throw new Error("Backend token missing");
         }
 
-        const safeToken: string = token;
-        tokenRef.current = safeToken;
+        const token: string = backendToken;
 
-        if (!cancelled) {
-          await refreshBalance(safeToken);
+        // 🔒 STEP 3: token is STRING — TS CANNOT ARGUE
+        const res = await fetch(
+          "https://predix-backend.onrender.com/portfolio/meta",
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        const json: unknown = await res.json();
+
+        if (
+          typeof json === "object" &&
+          json !== null &&
+          typeof (json as { balance?: unknown }).balance === "number"
+        ) {
+          if (!cancelled) {
+            setBalance((json as { balance: number }).balance);
+          }
+        } else {
+          if (!cancelled) setBalance(0);
         }
       } catch {
         localStorage.removeItem("backend_token");
-        tokenRef.current = null;
+        if (!cancelled) setBalance(0);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -129,32 +144,6 @@ function PortfolioPage() {
       cancelled = true;
     };
   }, [ready, authenticated, getAccessToken]);
-
-  /* ===============================
-     Balance Refresh (STRING ONLY)
-  ================================ */
-  async function refreshBalance(token: string) {
-    const res = await fetch(
-      "https://predix-backend.onrender.com/portfolio/meta",
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      }
-    );
-
-    const json: unknown = await res.json();
-
-    if (
-      typeof json === "object" &&
-      json !== null &&
-      typeof (json as any).balance === "number"
-    ) {
-      setBalance((json as any).balance);
-    } else {
-      setBalance(0);
-    }
-  }
 
   if (loading) {
     return <p style={{ padding: 20 }}>Loading…</p>;
@@ -179,7 +168,6 @@ function PortfolioPage() {
       <button
         onClick={() => {
           localStorage.removeItem("backend_token");
-          tokenRef.current = null;
           logout();
         }}
       >
