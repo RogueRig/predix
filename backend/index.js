@@ -48,7 +48,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Migration
+   MIGRATION (SAFE)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -59,19 +59,33 @@ async function migrate() {
       privy_user_id TEXT UNIQUE NOT NULL,
       email TEXT,
       wallet_address TEXT,
+      realized_pnl NUMERIC NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS portfolios (
+    CREATE TABLE IF NOT EXISTS positions (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       market_id TEXT NOT NULL,
       outcome TEXT NOT NULL,
       shares NUMERIC NOT NULL,
       avg_price NUMERIC NOT NULL,
-      idempotency_key TEXT,
+      UNIQUE (user_id, market_id, outcome)
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS trades (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      market_id TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      side TEXT CHECK (side IN ('buy','sell')),
+      shares NUMERIC NOT NULL,
+      price NUMERIC NOT NULL,
+      realized_pnl NUMERIC NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
@@ -147,76 +161,169 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   Trade (Buy / Sell)
+   TRADE (BUY / SELL)
 ================================ */
 app.post("/trade", requireBackendAuth, async (req, res) => {
-  const { market_id, outcome, shares, price } = req.body;
-  const key = req.headers["idempotency-key"];
+  const { market_id, outcome, side, shares, price } = req.body;
 
-  if (!market_id || !outcome || !shares || !price || !key) {
+  if (!market_id || !outcome || !side || !shares || !price) {
     return res.status(400).json({ error: "Invalid payload" });
   }
 
-  await pool.query(
-    `
-    INSERT INTO portfolios
-    (user_id, market_id, outcome, shares, avg_price, idempotency_key)
-    VALUES ($1,$2,$3,$4,$5,$6)
-    `,
-    [req.userId, market_id, outcome, Number(shares), Number(price), key]
-  );
+  const client = await pool.connect();
 
-  res.json({ ok: true });
+  try {
+    await client.query("BEGIN");
+
+    const posRes = await client.query(
+      `
+      SELECT shares, avg_price
+      FROM positions
+      WHERE user_id = $1 AND market_id = $2 AND outcome = $3
+      FOR UPDATE
+      `,
+      [req.userId, market_id, outcome]
+    );
+
+    let realizedPnl = 0;
+
+    if (side === "buy") {
+      if (posRes.rows.length === 0) {
+        await client.query(
+          `
+          INSERT INTO positions
+          (user_id, market_id, outcome, shares, avg_price)
+          VALUES ($1,$2,$3,$4,$5)
+          `,
+          [req.userId, market_id, outcome, shares, price]
+        );
+      } else {
+        const cur = posRes.rows[0];
+        const newShares = Number(cur.shares) + Number(shares);
+        const newAvg =
+          (Number(cur.shares) * Number(cur.avg_price) +
+            Number(shares) * Number(price)) /
+          newShares;
+
+        await client.query(
+          `
+          UPDATE positions
+          SET shares = $1, avg_price = $2
+          WHERE user_id = $3 AND market_id = $4 AND outcome = $5
+          `,
+          [newShares, newAvg, req.userId, market_id, outcome]
+        );
+      }
+    }
+
+    if (side === "sell") {
+      if (posRes.rows.length === 0 || Number(posRes.rows[0].shares) < shares) {
+        throw new Error("Insufficient shares");
+      }
+
+      const cur = posRes.rows[0];
+      realizedPnl =
+        (Number(price) - Number(cur.avg_price)) * Number(shares);
+
+      const remaining = Number(cur.shares) - Number(shares);
+
+      if (remaining === 0) {
+        await client.query(
+          `
+          DELETE FROM positions
+          WHERE user_id = $1 AND market_id = $2 AND outcome = $3
+          `,
+          [req.userId, market_id, outcome]
+        );
+      } else {
+        await client.query(
+          `
+          UPDATE positions
+          SET shares = $1
+          WHERE user_id = $2 AND market_id = $3 AND outcome = $4
+          `,
+          [remaining, req.userId, market_id, outcome]
+        );
+      }
+
+      await client.query(
+        `
+        UPDATE users
+        SET realized_pnl = realized_pnl + $1
+        WHERE id = $2
+        `,
+        [realizedPnl, req.userId]
+      );
+    }
+
+    await client.query(
+      `
+      INSERT INTO trades
+      (user_id, market_id, outcome, side, shares, price, realized_pnl)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `,
+      [req.userId, market_id, outcome, side, shares, price, realizedPnl]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({ ok: true, realized_pnl: realizedPnl });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    res.status(400).json({ error: e.message });
+  } finally {
+    client.release();
+  }
 });
 
 /* ===============================
-   Portfolio (Balance + Positions + PnL)
+   PORTFOLIO
 ================================ */
 app.get("/portfolio", requireBackendAuth, async (req, res) => {
-  const { rows } = await pool.query(
+  const posRes = await pool.query(
     `
-    SELECT
-      market_id,
-      outcome,
-      SUM(shares) AS total_shares,
-      SUM(CASE WHEN shares > 0 THEN shares * avg_price ELSE 0 END) AS buy_cost,
-      SUM(CASE WHEN shares < 0 THEN ABS(shares * avg_price) ELSE 0 END) AS sell_proceeds
-    FROM portfolios
+    SELECT market_id, outcome, shares, avg_price
+    FROM positions
     WHERE user_id = $1
-    GROUP BY market_id, outcome
-    HAVING SUM(shares) <> 0;
     `,
     [req.userId]
   );
 
-  let balance = STARTING_BALANCE;
-  const positions = [];
+  const userRes = await pool.query(
+    `SELECT realized_pnl FROM users WHERE id = $1`,
+    [req.userId]
+  );
 
-  for (const r of rows) {
-    balance -= Number(r.buy_cost);
-    balance += Number(r.sell_proceeds);
+  let unrealizedPnl = 0;
+  let invested = 0;
 
-    const netShares = Number(r.total_shares);
-    const avgPrice =
-      netShares !== 0 ? Number(r.buy_cost) / Math.abs(netShares) : 0;
+  const positions = posRes.rows.map((p) => {
+    const price = getMarketPrice(p.market_id, p.outcome);
+    const value = Number(p.shares) * price;
+    const cost = Number(p.shares) * Number(p.avg_price);
+    const u = value - cost;
 
-    const currentPrice = getMarketPrice(r.market_id, r.outcome);
-    const positionValue = netShares * currentPrice;
-    const unrealizedPnl = positionValue - (netShares * avgPrice);
+    invested += cost;
+    unrealizedPnl += u;
 
-    positions.push({
-      market_id: r.market_id,
-      outcome: r.outcome,
-      shares: netShares,
-      avg_price: avgPrice,
-      current_price: currentPrice,
-      position_value: positionValue,
-      unrealized_pnl: unrealizedPnl,
-    });
-  }
+    return {
+      market_id: p.market_id,
+      outcome: p.outcome,
+      shares: Number(p.shares),
+      avg_price: Number(p.avg_price),
+      current_price: price,
+      position_value: value,
+      unrealized_pnl: u,
+    };
+  });
+
+  const realizedPnl = Number(userRes.rows[0]?.realized_pnl ?? 0);
+  const balance = STARTING_BALANCE + realizedPnl - invested;
 
   res.json({
     balance,
+    realized_pnl: realizedPnl,
+    unrealized_pnl: unrealizedPnl,
     positions,
   });
 });
