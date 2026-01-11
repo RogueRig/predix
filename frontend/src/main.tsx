@@ -51,6 +51,7 @@ function Portfolio() {
   const [realizedPnL, setRealizedPnL] = React.useState(0);
   const [unrealizedPnL, setUnrealizedPnL] = React.useState(0);
   const [positions, setPositions] = React.useState<any[]>([]);
+  const [trades, setTrades] = React.useState<any[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<string | null>(null);
 
@@ -103,9 +104,7 @@ function Portfolio() {
 
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio",
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
+      { headers: { Authorization: `Bearer ${token}` } }
     );
 
     const json = await res.json();
@@ -117,12 +116,31 @@ function Portfolio() {
     setPositions(json.positions ?? []);
   }
 
+  /* ===============================
+     Load Trades (SAFE)
+  ================================ */
+  async function refreshTrades() {
+    try {
+      const token = await getBackendToken();
+      const res = await fetch(
+        "https://predix-backend.onrender.com/trades",
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) return;
+      const json = await res.json();
+      setTrades(json.trades ?? []);
+    } catch {
+      /* silently ignore – feature safe */
+    }
+  }
+
   React.useEffect(() => {
     refreshPortfolio().catch((e) => setError(e.message));
+    refreshTrades();
   }, []);
 
   /* ===============================
-     Trade (BUY / SELL)
+     Trade
   ================================ */
   async function trade(side: "buy" | "sell") {
     try {
@@ -143,7 +161,7 @@ function Portfolio() {
             market_id: marketId,
             outcome,
             side,
-            shares, // ALWAYS POSITIVE
+            shares,
             price,
           }),
         }
@@ -159,6 +177,7 @@ function Portfolio() {
       );
 
       await refreshPortfolio();
+      await refreshTrades();
     } catch (e: any) {
       setError(e.message);
     }
@@ -173,23 +192,16 @@ function Portfolio() {
       <h3>Positions</h3>
       {positions.length === 0 && <p>No positions</p>}
       {positions.map((p, i) => (
-        <div
-          key={i}
-          style={{ border: "1px solid #333", padding: 12, marginBottom: 10 }}
-        >
-          <strong>
-            {p.market_id} — {p.outcome}
-          </strong>
+        <div key={i} style={{ border: "1px solid #333", padding: 12 }}>
+          <strong>{p.market_id} — {p.outcome}</strong>
           <div>Shares: {p.shares}</div>
           <div>Avg Price: {p.avg_price.toFixed(4)}</div>
-          <div>Current Price: {p.current_price.toFixed(4)}</div>
-          <div>Position Value: {p.position_value.toFixed(2)}</div>
+          <div>Value: {p.position_value.toFixed(2)}</div>
           <div>Unrealized PnL: {p.unrealized_pnl.toFixed(2)}</div>
         </div>
       ))}
 
       <h3>Trade</h3>
-
       <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
       <br />
       <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
@@ -197,28 +209,26 @@ function Portfolio() {
         <option value="NO">NO</option>
       </select>
       <br />
-      <input
-        type="number"
-        value={shares}
-        min={1}
-        onChange={(e) => setShares(Number(e.target.value))}
-      />
+      <input type="number" value={shares} onChange={(e) => setShares(+e.target.value)} />
       <br />
-      <input
-        type="number"
-        value={price}
-        step="0.01"
-        onChange={(e) => setPrice(Number(e.target.value))}
-      />
+      <input type="number" value={price} onChange={(e) => setPrice(+e.target.value)} />
       <br />
-
       <button onClick={() => trade("buy")}>Buy</button>
-      <button onClick={() => trade("sell")} style={{ marginLeft: 10 }}>
-        Sell
-      </button>
+      <button onClick={() => trade("sell")} style={{ marginLeft: 10 }}>Sell</button>
 
       {message && <p style={{ color: "green" }}>{message}</p>}
       {error && <p style={{ color: "red" }}>{error}</p>}
+
+      <h3>Trade History</h3>
+      {trades.length === 0 && <p>No trades yet</p>}
+      {trades.map((t, i) => (
+        <div key={i} style={{ borderBottom: "1px solid #444", padding: 8 }}>
+          {t.side.toUpperCase()} {t.shares} {t.outcome} @ {t.price}
+          {t.realized_pnl !== 0 && (
+            <span> | PnL: {Number(t.realized_pnl).toFixed(2)}</span>
+          )}
+        </div>
+      ))}
 
       <br />
       <button
