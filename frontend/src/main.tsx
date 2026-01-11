@@ -45,7 +45,7 @@ function LoginPage() {
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
-  const [balance, setBalance] = React.useState<number>(0);
+  const [balance, setBalance] = React.useState<number | null>(null);
   const [positions, setPositions] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -56,17 +56,14 @@ function PortfolioPage() {
   const [shares, setShares] = React.useState(10);
   const [price, setPrice] = React.useState(1);
 
-  const hasLoadedRef = React.useRef(false);
-
   /* ===============================
-     Backend Token (STRICT + RETRY)
+     Backend Token
   ================================ */
   async function getBackendToken(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
     if (cached) return cached;
 
     let privyToken: string | null = null;
-
     for (let i = 0; i < 10; i++) {
       const t = await getAccessToken();
       if (typeof t === "string") {
@@ -96,24 +93,17 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     Balance (GUARANTEED SET)
+     Balance
   ================================ */
   async function refreshBalance() {
     const token = await getBackendToken();
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio/meta",
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
+      { headers: { Authorization: `Bearer ${token}` } }
     );
-
-    if (!res.ok) {
-      setBalance(0);
-      return;
-    }
-
+    if (!res.ok) return;
     const json = await res.json();
-    setBalance(typeof json.balance === "number" ? json.balance : 0);
+    setBalance(typeof json.balance === "number" ? json.balance : null);
   }
 
   /* ===============================
@@ -123,16 +113,9 @@ function PortfolioPage() {
     const token = await getBackendToken();
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio/positions",
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
+      { headers: { Authorization: `Bearer ${token}` } }
     );
-
-    if (!res.ok) {
-      setPositions([]);
-      return;
-    }
-
+    if (!res.ok) return;
     const json = await res.json();
     setPositions(
       (json.positions || []).map((p: any) => ({
@@ -147,6 +130,20 @@ function PortfolioPage() {
      BUY
   ================================ */
   async function buy() {
+    await trade(Math.abs(shares));
+  }
+
+  /* ===============================
+     SELL (NEGATIVE SHARES)
+  ================================ */
+  async function sell() {
+    await trade(-Math.abs(shares));
+  }
+
+  /* ===============================
+     SHARED TRADE
+  ================================ */
+  async function trade(signedShares: number) {
     try {
       setError(null);
       setMessage(null);
@@ -165,7 +162,7 @@ function PortfolioPage() {
           body: JSON.stringify({
             market_id: marketId,
             outcome,
-            shares,
+            shares: signedShares,
             price,
           }),
         }
@@ -174,24 +171,24 @@ function PortfolioPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Trade failed");
 
-      setMessage(`Bought ${shares} @ ${price}`);
+      setMessage(
+        signedShares > 0
+          ? `Bought ${signedShares} @ ${price}`
+          : `Sold ${Math.abs(signedShares)} @ ${price}`
+      );
 
-      await refreshBalance();
       await refreshPositions();
+      await refreshBalance();
     } catch (e: any) {
       setError(e.message);
     }
   }
 
   /* ===============================
-     Initial Load (ONCE)
+     Initial Load
   ================================ */
   React.useEffect(() => {
     if (!ready || !authenticated) return;
-    if (hasLoadedRef.current) return;
-
-    hasLoadedRef.current = true;
-
     (async () => {
       await refreshBalance();
       await refreshPositions();
@@ -214,10 +211,12 @@ function PortfolioPage() {
           marginBottom: 20,
         }}
       >
-        <strong>Balance:</strong> {balance.toFixed(2)}
+        <strong>Balance:</strong>{" "}
+        {balance === null ? "—" : balance.toFixed(2)}
       </div>
 
       <h2>Positions</h2>
+      {positions.length === 0 && <p>No positions</p>}
 
       {positions.map((p, i) => (
         <div
@@ -232,28 +231,35 @@ function PortfolioPage() {
         </div>
       ))}
 
-      <h2>Buy</h2>
+      <h2>Trade</h2>
 
       <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
       <br />
+
       <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
         <option>YES</option>
         <option>NO</option>
       </select>
       <br />
+
       <input
         type="number"
         value={shares}
         onChange={(e) => setShares(Number(e.target.value))}
       />
       <br />
+
       <input
         type="number"
         value={price}
         onChange={(e) => setPrice(Number(e.target.value))}
       />
       <br />
+
       <button onClick={buy}>Buy</button>
+      <button onClick={sell} style={{ marginLeft: 10 }}>
+        Sell
+      </button>
 
       {message && <p style={{ color: "green" }}>{message}</p>}
       {error && <p style={{ color: "red" }}>{error}</p>}
