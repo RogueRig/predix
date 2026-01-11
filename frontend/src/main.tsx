@@ -45,7 +45,7 @@ function LoginPage() {
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
-  const [balance, setBalance] = React.useState(0);
+  const [balance, setBalance] = React.useState<number | null>(null);
   const [positions, setPositions] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -57,13 +57,22 @@ function PortfolioPage() {
   const [price, setPrice] = React.useState(1);
 
   /* ===============================
-     Backend Token
+     Backend Token (STRICT)
   ================================ */
   async function getBackendToken(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
     if (cached) return cached;
 
-    const privyToken = await getAccessToken();
+    let privyToken: string | null = null;
+    for (let i = 0; i < 10; i++) {
+      const t = await getAccessToken();
+      if (typeof t === "string") {
+        privyToken = t;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+
     if (!privyToken) throw new Error("Privy token unavailable");
 
     const res = await fetch(
@@ -75,37 +84,60 @@ function PortfolioPage() {
     );
 
     const json = await res.json();
-    if (!json.token) throw new Error("Backend auth failed");
+    if (!res.ok || typeof json.token !== "string") {
+      throw new Error("Backend auth failed");
+    }
 
     localStorage.setItem("backend_token", json.token);
     return json.token;
   }
 
   /* ===============================
-     Load Portfolio (ONLY SOURCE OF BALANCE)
+     Balance
   ================================ */
-  async function loadPortfolio() {
+  async function refreshBalance() {
     const token = await getBackendToken();
-
-    const balRes = await fetch(
+    const res = await fetch(
       "https://predix-backend.onrender.com/portfolio/meta",
-      { headers: { Authorization: `Bearer ${token}` } }
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
     );
 
-    const posRes = await fetch(
-      "https://predix-backend.onrender.com/portfolio/positions",
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
+    if (!res.ok) return;
 
-    const balJson = await balRes.json();
-    const posJson = await posRes.json();
-
-    setBalance(Number(balJson.balance ?? 0));
-    setPositions(posJson.positions || []);
+    const json = await res.json();
+    if (typeof json.balance === "number") {
+      setBalance(json.balance);
+    }
   }
 
   /* ===============================
-     BUY (NO MATH, NO GUESSING)
+     Positions
+  ================================ */
+  async function refreshPositions() {
+    const token = await getBackendToken();
+    const res = await fetch(
+      "https://predix-backend.onrender.com/portfolio/positions",
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    if (!res.ok) return;
+
+    const json = await res.json();
+    setPositions(
+      (json.positions || []).map((p: any) => ({
+        ...p,
+        total_shares: Number(p.total_shares),
+        avg_price: Number(p.avg_price),
+      }))
+    );
+  }
+
+  /* ===============================
+     BUY
   ================================ */
   async function buy() {
     try {
@@ -121,8 +153,7 @@ function PortfolioPage() {
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
-            "Idempotency-Key":
-              crypto.randomUUID?.() ?? `mobile-${Date.now()}`,
+            "Idempotency-Key": crypto.randomUUID(),
           },
           body: JSON.stringify({
             market_id: marketId,
@@ -138,16 +169,24 @@ function PortfolioPage() {
 
       setMessage(`Bought ${shares} @ ${price}`);
 
-      // ✅ SINGLE REFRESH FROM BACKEND
-      await loadPortfolio();
+      await refreshPositions();
+      await refreshBalance();
     } catch (e: any) {
       setError(e.message);
     }
   }
 
+  /* ===============================
+     Initial Load
+  ================================ */
   React.useEffect(() => {
     if (!ready || !authenticated) return;
-    loadPortfolio().finally(() => setLoading(false));
+
+    (async () => {
+      await refreshBalance();
+      await refreshPositions();
+      setLoading(false);
+    })();
   }, [ready, authenticated]);
 
   if (loading) return <p style={{ padding: 20 }}>Loading…</p>;
@@ -156,18 +195,31 @@ function PortfolioPage() {
     <div style={{ padding: 20 }}>
       <h1>Portfolio</h1>
 
-      <div style={{ background: "#111", color: "#fff", padding: 16 }}>
-        <strong>Balance:</strong> {balance.toFixed(2)}
+      <div
+        style={{
+          background: "#111",
+          color: "#fff",
+          padding: 16,
+          borderRadius: 12,
+          marginBottom: 20,
+        }}
+      >
+        <strong>Balance:</strong>{" "}
+        {balance === null ? "—" : balance.toFixed(2)}
       </div>
 
       <h2>Positions</h2>
+
       {positions.map((p, i) => (
-        <div key={i} style={{ border: "1px solid #333", padding: 10 }}>
+        <div
+          key={i}
+          style={{ border: "1px solid #333", padding: 12, marginBottom: 10 }}
+        >
           <strong>
             {p.market_id} — {p.outcome}
           </strong>
           <div>Shares: {p.total_shares}</div>
-          <div>Avg Price: {Number(p.avg_price).toFixed(4)}</div>
+          <div>Avg Price: {p.avg_price.toFixed(4)}</div>
         </div>
       ))}
 
@@ -175,27 +227,23 @@ function PortfolioPage() {
 
       <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
       <br />
-
       <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
         <option>YES</option>
         <option>NO</option>
       </select>
       <br />
-
       <input
         type="number"
         value={shares}
         onChange={(e) => setShares(Number(e.target.value))}
       />
       <br />
-
       <input
         type="number"
         value={price}
         onChange={(e) => setPrice(Number(e.target.value))}
       />
       <br />
-
       <button onClick={buy}>Buy</button>
 
       {message && <p style={{ color: "green" }}>{message}</p>}
@@ -215,7 +263,7 @@ function PortfolioPage() {
 }
 
 /* ===============================
-   App
+   App Root
 ================================ */
 function App() {
   return (
@@ -230,6 +278,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );
@@ -238,7 +287,9 @@ function App() {
 /* ===============================
    Mount
 ================================ */
-ReactDOM.createRoot(document.getElementById("root")!).render(
+ReactDOM.createRoot(
+  document.getElementById("root") as HTMLElement
+).render(
   <PrivyProvider
     appId="cmk602oo400ebjs0cgw0vbbao"
     config={{ loginMethods: ["email", "wallet"] }}
