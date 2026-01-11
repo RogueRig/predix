@@ -93,47 +93,63 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     Balance
+     Balance (SAFE)
   ================================ */
   async function refreshBalance() {
-    const token = await getBackendToken();
-    const res = await fetch(
-      "https://predix-backend.onrender.com/portfolio/meta",
-      {
-        headers: { Authorization: `Bearer ${token}` },
+    try {
+      const token = await getBackendToken();
+      const res = await fetch(
+        "https://predix-backend.onrender.com/portfolio/meta",
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      if (!res.ok) return;
+
+      const json = await res.json();
+      const next = Number(json.balance);
+
+      if (Number.isFinite(next)) {
+        setBalance(next);
       }
-    );
-
-    if (!res.ok) return;
-
-    const json = await res.json();
-    if (typeof json.balance === "number") {
-      setBalance(json.balance);
+    } catch {
+      // do nothing — never clobber balance
     }
   }
 
   /* ===============================
-     Positions
+     Positions (HARDENED)
   ================================ */
   async function refreshPositions() {
-    const token = await getBackendToken();
-    const res = await fetch(
-      "https://predix-backend.onrender.com/portfolio/positions",
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
+    try {
+      const token = await getBackendToken();
+      const res = await fetch(
+        "https://predix-backend.onrender.com/portfolio/positions",
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
 
-    if (!res.ok) return;
+      if (!res.ok) return;
 
-    const json = await res.json();
-    setPositions(
-      (json.positions || []).map((p: any) => ({
-        ...p,
-        total_shares: Number(p.total_shares),
-        avg_price: Number(p.avg_price),
-      }))
-    );
+      const json = await res.json();
+
+      setPositions(
+        (json.positions || []).map((p: any) => ({
+          market_id: p.market_id,
+          outcome: p.outcome,
+          total_shares: Number.isFinite(Number(p.total_shares))
+            ? Number(p.total_shares)
+            : 0,
+          avg_price: Number.isFinite(Number(p.avg_price))
+            ? Number(p.avg_price)
+            : 0,
+        }))
+      );
+    } catch {
+      // ignore
+    }
   }
 
   /* ===============================
