@@ -45,7 +45,7 @@ function LoginPage() {
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
-  const [balance, setBalance] = React.useState<number | null>(null);
+  const [balance, setBalance] = React.useState<number>(0);
   const [positions, setPositions] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -56,17 +56,17 @@ function PortfolioPage() {
   const [shares, setShares] = React.useState(10);
   const [price, setPrice] = React.useState(1);
 
-  // ✅ CRITICAL FIX — prevents balance reset loops
   const hasLoadedRef = React.useRef(false);
 
   /* ===============================
-     Backend Token (STRICT)
+     Backend Token (STRICT + RETRY)
   ================================ */
   async function getBackendToken(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
     if (cached) return cached;
 
     let privyToken: string | null = null;
+
     for (let i = 0; i < 10; i++) {
       const t = await getAccessToken();
       if (typeof t === "string") {
@@ -96,7 +96,7 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     Balance
+     Balance (GUARANTEED SET)
   ================================ */
   async function refreshBalance() {
     const token = await getBackendToken();
@@ -107,12 +107,13 @@ function PortfolioPage() {
       }
     );
 
-    if (!res.ok) return;
+    if (!res.ok) {
+      setBalance(0);
+      return;
+    }
 
     const json = await res.json();
-    if (typeof json.balance === "number") {
-      setBalance(json.balance);
-    }
+    setBalance(typeof json.balance === "number" ? json.balance : 0);
   }
 
   /* ===============================
@@ -127,7 +128,10 @@ function PortfolioPage() {
       }
     );
 
-    if (!res.ok) return;
+    if (!res.ok) {
+      setPositions([]);
+      return;
+    }
 
     const json = await res.json();
     setPositions(
@@ -172,15 +176,15 @@ function PortfolioPage() {
 
       setMessage(`Bought ${shares} @ ${price}`);
 
-      await refreshPositions();
       await refreshBalance();
+      await refreshPositions();
     } catch (e: any) {
       setError(e.message);
     }
   }
 
   /* ===============================
-     Initial Load (RUNS ONCE ONLY)
+     Initial Load (ONCE)
   ================================ */
   React.useEffect(() => {
     if (!ready || !authenticated) return;
@@ -189,12 +193,9 @@ function PortfolioPage() {
     hasLoadedRef.current = true;
 
     (async () => {
-      try {
-        await refreshBalance();
-        await refreshPositions();
-      } finally {
-        setLoading(false);
-      }
+      await refreshBalance();
+      await refreshPositions();
+      setLoading(false);
     })();
   }, [ready, authenticated]);
 
@@ -213,8 +214,7 @@ function PortfolioPage() {
           marginBottom: 20,
         }}
       >
-        <strong>Balance:</strong>{" "}
-        {balance === null ? "—" : balance.toFixed(2)}
+        <strong>Balance:</strong> {balance.toFixed(2)}
       </div>
 
       <h2>Positions</h2>
@@ -232,7 +232,7 @@ function PortfolioPage() {
         </div>
       ))}
 
-      <h2>Buy (Paper)</h2>
+      <h2>Buy</h2>
 
       <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
       <br />
