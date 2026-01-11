@@ -55,7 +55,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   MIGRATION (IDEMPOTENT & SAFE)
+   MIGRATION (BULLETPROOF)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -88,27 +88,24 @@ async function migrate() {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       market_id TEXT NOT NULL,
-      outcome TEXT NOT NULL,
-      side TEXT CHECK (side IN ('buy','sell')),
-      shares NUMERIC NOT NULL,
-      price NUMERIC NOT NULL,
-      realized_pnl NUMERIC NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
 
-  /* 🔒 SCHEMA DRIFT FIXES */
-  await pool.query(`
-    ALTER TABLE trades
-    ADD COLUMN IF NOT EXISTS outcome TEXT;
-  `);
+  /* 🔧 PATCH ALL LEGACY SCHEMA DRIFT */
+  await pool.query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS outcome TEXT;`);
+  await pool.query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS side TEXT;`);
+  await pool.query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS shares NUMERIC;`);
+  await pool.query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS price NUMERIC;`);
+  await pool.query(
+    `ALTER TABLE trades ADD COLUMN IF NOT EXISTS realized_pnl NUMERIC NOT NULL DEFAULT 0;`
+  );
 
-  await pool.query(`
-    ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS realized_pnl NUMERIC NOT NULL DEFAULT 0;
-  `);
+  await pool.query(
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS realized_pnl NUMERIC NOT NULL DEFAULT 0;`
+  );
 
-  console.log("✅ Database migrated safely");
+  console.log("✅ Database schema fully aligned");
 }
 
 await migrate();
@@ -199,7 +196,7 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
       `
       SELECT shares, avg_price
       FROM positions
-      WHERE user_id = $1 AND market_id = $2 AND outcome = $3
+      WHERE user_id=$1 AND market_id=$2 AND outcome=$3
       FOR UPDATE
       `,
       [req.userId, market_id, outcome]
@@ -226,8 +223,8 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
         await client.query(
           `
           UPDATE positions
-          SET shares = $1, avg_price = $2
-          WHERE user_id = $3 AND market_id = $4 AND outcome = $5
+          SET shares=$1, avg_price=$2
+          WHERE user_id=$3 AND market_id=$4 AND outcome=$5
           `,
           [newShares, newAvg, req.userId, market_id, outcome]
         );
@@ -258,14 +255,15 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
       }
 
       await client.query(
-        `UPDATE users SET realized_pnl = realized_pnl + $1 WHERE id = $2`,
+        `UPDATE users SET realized_pnl = realized_pnl + $1 WHERE id=$2`,
         [realizedPnl, req.userId]
       );
     }
 
     await client.query(
       `
-      INSERT INTO trades (user_id, market_id, outcome, side, shares, price, realized_pnl)
+      INSERT INTO trades
+      (user_id, market_id, outcome, side, shares, price, realized_pnl)
       VALUES ($1,$2,$3,$4,$5,$6,$7)
       `,
       [req.userId, market_id, outcome, side, qty, price, realizedPnl]
