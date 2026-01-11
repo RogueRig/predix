@@ -143,7 +143,7 @@ function Portfolio() {
             market_id: marketId,
             outcome,
             side,
-            shares,
+            shares, // ALWAYS POSITIVE
             price,
           }),
         }
@@ -173,7 +173,10 @@ function Portfolio() {
       <h3>Positions</h3>
       {positions.length === 0 && <p>No positions</p>}
       {positions.map((p, i) => (
-        <div key={i} style={{ border: "1px solid #333", padding: 12 }}>
+        <div
+          key={i}
+          style={{ border: "1px solid #333", padding: 12, marginBottom: 10 }}
+        >
           <strong>
             {p.market_id} — {p.outcome}
           </strong>
@@ -197,12 +200,14 @@ function Portfolio() {
       <input
         type="number"
         value={shares}
+        min={1}
         onChange={(e) => setShares(Number(e.target.value))}
       />
       <br />
       <input
         type="number"
         value={price}
+        step="0.01"
         onChange={(e) => setPrice(Number(e.target.value))}
       />
       <br />
