@@ -39,7 +39,7 @@ const pool = new Pool({
 });
 
 /* ===============================
-   Privy (JS SAFE)
+   Privy
 ================================ */
 const privy = new PrivyClient(
   process.env.PRIVY_APP_ID,
@@ -55,8 +55,9 @@ async function migrate() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      wallet_address TEXT UNIQUE NOT NULL,
+      privy_user_id TEXT UNIQUE NOT NULL,
       email TEXT,
+      wallet_address TEXT,
       balance NUMERIC NOT NULL DEFAULT 1000,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
@@ -70,8 +71,8 @@ async function migrate() {
       outcome TEXT NOT NULL,
       shares NUMERIC NOT NULL,
       avg_price NUMERIC NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      idempotency_key TEXT
+      idempotency_key TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
 
@@ -81,12 +82,12 @@ async function migrate() {
 await migrate();
 
 /* ===============================
-   AUTH (WALLET LOCKED)
+   Auth
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith("Bearer ")) {
+    if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -94,20 +95,19 @@ app.post("/auth/privy", async (req, res) => {
       auth.replace("Bearer ", "")
     );
 
-    const wallet = verified.wallet?.address;
-    if (!wallet) {
-      return res.status(400).json({ error: "Wallet required" });
-    }
-
     const { rows } = await pool.query(
       `
-      INSERT INTO users (wallet_address, email)
-      VALUES ($1,$2)
-      ON CONFLICT (wallet_address)
+      INSERT INTO users (privy_user_id, email, wallet_address)
+      VALUES ($1,$2,$3)
+      ON CONFLICT (privy_user_id)
       DO UPDATE SET email = EXCLUDED.email
       RETURNING id;
       `,
-      [wallet.toLowerCase(), verified.email ?? null]
+      [
+        verified.userId,
+        verified.email ?? null,
+        verified.wallet?.address ?? null,
+      ]
     );
 
     const token = jwt.sign(
@@ -124,12 +124,12 @@ app.post("/auth/privy", async (req, res) => {
 });
 
 /* ===============================
-   JWT GUARD
+   JWT Guard
 ================================ */
-function requireBackendAuth(req, res, next) {
+function requireBackendAuth(req: any, res: any, next: any) {
   try {
     const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith("Bearer ")) {
+    if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -145,9 +145,44 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
+   DEV RESET (🔥 THIS IS NEW)
+================================ */
+app.post("/dev/reset", requireBackendAuth, async (req: any, res) => {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    await client.query(
+      `DELETE FROM portfolios WHERE user_id = $1`,
+      [req.userId]
+    );
+
+    await client.query(
+      `UPDATE users SET balance = 1000 WHERE id = $1`,
+      [req.userId]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      ok: true,
+      balance: 1000,
+      message: "Account reset successful",
+    });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    console.error(e);
+    res.status(500).json({ error: "Reset failed" });
+  } finally {
+    client.release();
+  }
+});
+
+/* ===============================
    BUY
 ================================ */
-app.post("/trade/buy", requireBackendAuth, async (req, res) => {
+app.post("/trade/buy", requireBackendAuth, async (req: any, res) => {
   const client = await pool.connect();
 
   try {
@@ -157,6 +192,10 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
     }
 
     const { market_id, outcome, shares, price } = req.body;
+    if (!market_id || !outcome || !shares || !price) {
+      return res.status(400).json({ error: "Invalid payload" });
+    }
+
     const cost = Number(shares) * Number(price);
 
     await client.query("BEGIN");
@@ -167,6 +206,7 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
     );
 
     const balance = Number(balRes.rows[0].balance);
+
     if (balance < cost) {
       await client.query("ROLLBACK");
       return res.status(400).json({ error: "Insufficient balance" });
@@ -188,36 +228,42 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 
     await client.query("COMMIT");
 
-    res.json({ spent: cost });
+    res.json({
+      status: "filled",
+      spent: cost,
+      remaining_balance: balance - cost,
+    });
   } catch (e) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: String(e) });
+    console.error(e);
+    res.status(500).json({ error: "Trade failed" });
   } finally {
     client.release();
   }
 });
 
 /* ===============================
-   BALANCE
+   Balance
 ================================ */
-app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
+app.get("/portfolio/meta", requireBackendAuth, async (req: any, res) => {
   const { rows } = await pool.query(
     `SELECT balance FROM users WHERE id = $1`,
     [req.userId]
   );
+
   res.json({ balance: Number(rows[0]?.balance ?? 0) });
 });
 
 /* ===============================
-   POSITIONS
+   Positions
 ================================ */
-app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
+app.get("/portfolio/positions", requireBackendAuth, async (req: any, res) => {
   const { rows } = await pool.query(
     `
     SELECT
       market_id,
       outcome,
-      SUM(shares) AS total_shares,
+      SUM(shares)::float AS total_shares,
       ROUND(
         SUM(shares * avg_price) / NULLIF(SUM(shares), 0),
         4
@@ -235,10 +281,12 @@ app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   HEALTH
+   Health
 ================================ */
-app.get("/", (_, res) => res.json({ ok: true }));
+app.get("/", (_, res) => {
+  res.json({ ok: true });
+});
 
 app.listen(PORT, () => {
-  console.log("🚀 Backend running (JS-safe)");
+  console.log("🚀 Backend running on", PORT);
 });
