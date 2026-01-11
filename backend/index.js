@@ -219,7 +219,7 @@ app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Positions (Aggregated)
+   Positions (FIXED, NULL-SAFE)
 ================================ */
 app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
@@ -227,15 +227,18 @@ app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
     SELECT
       market_id,
       outcome,
-      SUM(shares) AS total_shares,
-      ROUND(
-        SUM(shares * avg_price) / NULLIF(SUM(shares), 0),
-        4
+      COALESCE(SUM(shares), 0) AS total_shares,
+      COALESCE(
+        ROUND(
+          SUM(shares * avg_price) / NULLIF(SUM(shares), 0),
+          4
+        ),
+        0
       ) AS avg_price
     FROM portfolios
     WHERE user_id = $1
     GROUP BY market_id, outcome
-    HAVING SUM(shares) <> 0
+    HAVING COALESCE(SUM(shares), 0) <> 0
     ORDER BY market_id, outcome;
     `,
     [req.userId]
