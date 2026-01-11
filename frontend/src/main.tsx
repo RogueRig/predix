@@ -48,43 +48,41 @@ function Portfolio() {
   const { getAccessToken, logout } = usePrivy();
 
   const [balance, setBalance] = React.useState(0);
-  const [realizedPnl, setRealizedPnl] = React.useState(0);
-  const [unrealizedPnl, setUnrealizedPnl] = React.useState(0);
+  const [realizedPnL, setRealizedPnL] = React.useState(0);
+  const [unrealizedPnL, setUnrealizedPnL] = React.useState(0);
   const [positions, setPositions] = React.useState<any[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<string | null>(null);
 
-  // Trade form
   const [marketId, setMarketId] = React.useState("test-market");
   const [outcome, setOutcome] = React.useState("YES");
   const [shares, setShares] = React.useState(1);
   const [price, setPrice] = React.useState(1);
 
   /* ===============================
-     TOKEN HELPERS (STRICT)
+     Tokens (STRICT)
   ================================ */
-  async function getPrivyTokenStrict(): Promise<string> {
+  async function getBackendToken(): Promise<string> {
+    const cached = localStorage.getItem("backend_token");
+    if (typeof cached === "string") return cached;
+
+    let privyToken: string | null = null;
     for (let i = 0; i < 10; i++) {
-      const token = await getAccessToken();
-      if (typeof token === "string") return token;
+      const t = await getAccessToken();
+      if (typeof t === "string") {
+        privyToken = t;
+        break;
+      }
       await new Promise((r) => setTimeout(r, 300));
     }
-    throw new Error("Privy token unavailable");
-  }
 
-  async function getBackendTokenStrict(): Promise<string> {
-    const cached = localStorage.getItem("backend_token");
-    if (cached) return cached;
-
-    const privyToken = await getPrivyTokenStrict();
+    if (!privyToken) throw new Error("Privy token unavailable");
 
     const res = await fetch(
       "https://predix-backend.onrender.com/auth/privy",
       {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${privyToken}`,
-        },
+        headers: { Authorization: `Bearer ${privyToken}` },
       }
     );
 
@@ -98,30 +96,25 @@ function Portfolio() {
   }
 
   /* ===============================
-     LOAD PORTFOLIO (SINGLE CALL)
+     Load Portfolio (SINGLE ENDPOINT)
   ================================ */
   async function refreshPortfolio() {
-    const token = await getBackendTokenStrict();
+    const token = await getBackendToken();
 
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio",
       {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       }
     );
 
-    if (!res.ok) {
-      throw new Error("Failed to load portfolio");
-    }
-
     const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Failed to load portfolio");
 
     setBalance(Number(json.balance ?? 0));
-    setRealizedPnl(Number(json.realized_pnl ?? 0));
-    setUnrealizedPnl(Number(json.unrealized_pnl ?? 0));
-    setPositions(Array.isArray(json.positions) ? json.positions : []);
+    setRealizedPnL(Number(json.realized_pnl ?? 0));
+    setUnrealizedPnL(Number(json.unrealized_pnl ?? 0));
+    setPositions(json.positions ?? []);
   }
 
   React.useEffect(() => {
@@ -129,14 +122,14 @@ function Portfolio() {
   }, []);
 
   /* ===============================
-     BUY / SELL
+     Trade
   ================================ */
-  async function trade(side: "buy" | "sell") {
+  async function trade(sharesSigned: number) {
     try {
       setError(null);
       setMessage(null);
 
-      const token = await getBackendTokenStrict();
+      const token = await getBackendToken();
 
       const res = await fetch(
         "https://predix-backend.onrender.com/trade",
@@ -150,7 +143,7 @@ function Portfolio() {
           body: JSON.stringify({
             market_id: marketId,
             outcome,
-            shares: side === "sell" ? -Math.abs(shares) : Math.abs(shares),
+            shares: sharesSigned,
             price,
           }),
         }
@@ -160,7 +153,7 @@ function Portfolio() {
       if (!res.ok) throw new Error(json.error || "Trade failed");
 
       setMessage(
-        side === "buy"
+        sharesSigned > 0
           ? `Bought ${shares} @ ${price}`
           : `Sold ${shares} @ ${price}`
       );
@@ -174,29 +167,21 @@ function Portfolio() {
   return (
     <div style={{ padding: 20 }}>
       <h2>Balance: {balance.toFixed(2)}</h2>
-      <div>Realized PnL: {realizedPnl.toFixed(2)}</div>
-      <div>Unrealized PnL: {unrealizedPnl.toFixed(2)}</div>
+      <div>Realized PnL: {realizedPnL.toFixed(2)}</div>
+      <div>Unrealized PnL: {unrealizedPnL.toFixed(2)}</div>
 
       <h3>Positions</h3>
       {positions.length === 0 && <p>No positions</p>}
       {positions.map((p, i) => (
-        <div
-          key={i}
-          style={{
-            border: "1px solid #333",
-            borderRadius: 8,
-            padding: 12,
-            marginBottom: 12,
-          }}
-        >
+        <div key={i} style={{ border: "1px solid #333", padding: 12 }}>
           <strong>
             {p.market_id} — {p.outcome}
           </strong>
           <div>Shares: {p.shares}</div>
-          <div>Avg Price: {Number(p.avg_price).toFixed(4)}</div>
-          <div>Current Price: {Number(p.current_price).toFixed(4)}</div>
-          <div>Position Value: {Number(p.position_value).toFixed(2)}</div>
-          <div>Unrealized PnL: {Number(p.unrealized_pnl).toFixed(2)}</div>
+          <div>Avg Price: {p.avg_price.toFixed(4)}</div>
+          <div>Current Price: {p.current_price.toFixed(4)}</div>
+          <div>Position Value: {p.position_value.toFixed(2)}</div>
+          <div>Unrealized PnL: {p.unrealized_pnl.toFixed(2)}</div>
         </div>
       ))}
 
@@ -209,21 +194,13 @@ function Portfolio() {
         <option value="NO">NO</option>
       </select>
       <br />
-      <input
-        type="number"
-        value={shares}
-        onChange={(e) => setShares(Number(e.target.value))}
-      />
+      <input type="number" value={shares} onChange={(e) => setShares(+e.target.value)} />
       <br />
-      <input
-        type="number"
-        value={price}
-        onChange={(e) => setPrice(Number(e.target.value))}
-      />
+      <input type="number" value={price} onChange={(e) => setPrice(+e.target.value)} />
       <br />
 
-      <button onClick={() => trade("buy")}>Buy</button>
-      <button onClick={() => trade("sell")} style={{ marginLeft: 10 }}>
+      <button onClick={() => trade(shares)}>Buy</button>
+      <button onClick={() => trade(-shares)} style={{ marginLeft: 10 }}>
         Sell
       </button>
 
