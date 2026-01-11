@@ -47,7 +47,14 @@ function PortfolioPage() {
 
   const [balance, setBalance] = React.useState<number>(0);
   const [loading, setLoading] = React.useState<boolean>(true);
+  const [status, setStatus] = React.useState<string>("");
 
+  const [marketId, setMarketId] = React.useState<string>("");
+  const [outcome, setOutcome] = React.useState<"YES" | "NO">("YES");
+  const [shares, setShares] = React.useState<string>("");
+  const [price, setPrice] = React.useState<string>("");
+
+  /* ---------- AUTH + BALANCE ---------- */
   React.useEffect(() => {
     let cancelled = false;
 
@@ -57,7 +64,6 @@ function PortfolioPage() {
       try {
         setLoading(true);
 
-        // 🔒 STEP 1: force backend token to be string OR throw
         let backendToken = localStorage.getItem("backend_token");
 
         if (backendToken === null) {
@@ -80,9 +86,7 @@ function PortfolioPage() {
             "https://predix-backend.onrender.com/auth/privy",
             {
               method: "POST",
-              headers: {
-                Authorization: `Bearer ${privyToken}`,
-              },
+              headers: { Authorization: `Bearer ${privyToken}` },
             }
           );
 
@@ -101,20 +105,14 @@ function PortfolioPage() {
           localStorage.setItem("backend_token", backendToken);
         }
 
-        // 🔒 STEP 2: HARD TYPE NARROWING
         if (typeof backendToken !== "string") {
           throw new Error("Backend token missing");
         }
 
-        const token: string = backendToken;
-
-        // 🔒 STEP 3: token is STRING — TS CANNOT ARGUE
         const res = await fetch(
           "https://predix-backend.onrender.com/portfolio/meta",
           {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
+            headers: { Authorization: `Bearer ${backendToken}` },
           }
         );
 
@@ -125,11 +123,7 @@ function PortfolioPage() {
           json !== null &&
           typeof (json as { balance?: unknown }).balance === "number"
         ) {
-          if (!cancelled) {
-            setBalance((json as { balance: number }).balance);
-          }
-        } else {
-          if (!cancelled) setBalance(0);
+          if (!cancelled) setBalance((json as { balance: number }).balance);
         }
       } catch {
         localStorage.removeItem("backend_token");
@@ -145,9 +139,64 @@ function PortfolioPage() {
     };
   }, [ready, authenticated, getAccessToken]);
 
-  if (loading) {
-    return <p style={{ padding: 20 }}>Loading…</p>;
+  /* ---------- BUY / SELL ---------- */
+  async function submitTrade(type: "buy" | "sell") {
+    try {
+      setStatus("");
+
+      const backendToken = localStorage.getItem("backend_token");
+      if (typeof backendToken !== "string") {
+        throw new Error("Missing backend token");
+      }
+
+      const s = Number(shares);
+      const p = Number(price);
+
+      if (!marketId || s <= 0 || p <= 0) {
+        throw new Error("Invalid trade input");
+      }
+
+      const res = await fetch(
+        `https://predix-backend.onrender.com/trade/${type}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${backendToken}`,
+            "Idempotency-Key": crypto.randomUUID(),
+          },
+          body: JSON.stringify({
+            market_id: marketId,
+            outcome,
+            shares: s,
+            price: p,
+          }),
+        }
+      );
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json?.error ?? "Trade failed");
+      }
+
+      setStatus(type === "buy" ? "Trade filled" : "Trade sold");
+
+      // Refresh balance
+      const meta = await fetch(
+        "https://predix-backend.onrender.com/portfolio/meta",
+        { headers: { Authorization: `Bearer ${backendToken}` } }
+      );
+      const metaJson = await meta.json();
+      if (typeof metaJson.balance === "number") {
+        setBalance(metaJson.balance);
+      }
+    } catch (err) {
+      setStatus((err as Error).message);
+    }
   }
+
+  if (loading) return <p style={{ padding: 20 }}>Loading…</p>;
 
   return (
     <div style={{ padding: 20 }}>
@@ -163,6 +212,53 @@ function PortfolioPage() {
         }}
       >
         <strong>Balance:</strong> {balance.toFixed(2)}
+      </div>
+
+      {/* BUY / SELL */}
+      <div
+        style={{
+          border: "1px solid #333",
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 20,
+        }}
+      >
+        <h3>Trade (Paper)</h3>
+
+        <input
+          placeholder="Market ID"
+          value={marketId}
+          onChange={(e) => setMarketId(e.target.value)}
+          style={{ width: "100%", marginBottom: 8 }}
+        />
+
+        <select
+          value={outcome}
+          onChange={(e) => setOutcome(e.target.value as "YES" | "NO")}
+          style={{ width: "100%", marginBottom: 8 }}
+        >
+          <option value="YES">YES</option>
+          <option value="NO">NO</option>
+        </select>
+
+        <input
+          placeholder="Shares"
+          value={shares}
+          onChange={(e) => setShares(e.target.value)}
+          style={{ width: "100%", marginBottom: 8 }}
+        />
+
+        <input
+          placeholder="Price"
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          style={{ width: "100%", marginBottom: 12 }}
+        />
+
+        <button onClick={() => submitTrade("buy")}>Buy</button>{" "}
+        <button onClick={() => submitTrade("sell")}>Sell</button>
+
+        {status && <p style={{ marginTop: 10 }}>{status}</p>}
       </div>
 
       <button
