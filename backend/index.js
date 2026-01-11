@@ -48,7 +48,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   SAFE MIGRATION (NO DATA LOSS)
+   Migration
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -146,62 +146,55 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   BUY TRADE
+   DEV RESET (TEMPORARY)
 ================================ */
-app.post("/trade/buy", requireBackendAuth, async (req, res) => {
-  const client = await pool.connect();
+app.post("/dev/reset", requireBackendAuth, async (req, res) => {
+  await pool.query(
+    `DELETE FROM portfolios WHERE user_id = $1`,
+    [req.userId]
+  );
 
-  try {
-    const key = req.headers["idempotency-key"];
-    if (typeof key !== "string") {
-      return res.status(400).json({ error: "Missing Idempotency-Key" });
-    }
-
-    const { market_id, outcome, shares, price } = req.body;
-    if (!market_id || !outcome || !shares || !price) {
-      return res.status(400).json({ error: "Invalid payload" });
-    }
-
-    await client.query("BEGIN");
-
-    await client.query(
-      `
-      INSERT INTO portfolios
-      (user_id, market_id, outcome, shares, avg_price, idempotency_key)
-      VALUES ($1,$2,$3,$4,$5,$6)
-      `,
-      [req.userId, market_id, outcome, Number(shares), Number(price), key]
-    );
-
-    await client.query("COMMIT");
-
-    res.json({
-      status: "filled",
-      spent: Number(shares) * Number(price),
-    });
-  } catch (e) {
-    await client.query("ROLLBACK");
-    console.error(e);
-    res.status(500).json({ error: String(e) });
-  } finally {
-    client.release();
-  }
+  res.json({
+    ok: true,
+    message: "Portfolio reset. Balance = 1000",
+  });
 });
 
 /* ===============================
-   PORTFOLIO BALANCE (DERIVED)
+   BUY
+================================ */
+app.post("/trade/buy", requireBackendAuth, async (req, res) => {
+  const { market_id, outcome, shares, price } = req.body;
+
+  if (!market_id || !outcome || !shares || !price) {
+    return res.status(400).json({ error: "Invalid payload" });
+  }
+
+  await pool.query(
+    `
+    INSERT INTO portfolios
+    (user_id, market_id, outcome, shares, avg_price)
+    VALUES ($1,$2,$3,$4,$5)
+    `,
+    [req.userId, market_id, outcome, Number(shares), Number(price)]
+  );
+
+  res.json({
+    status: "filled",
+    spent: Number(shares) * Number(price),
+  });
+});
+
+/* ===============================
+   BALANCE (DERIVED)
 ================================ */
 app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `
     SELECT
       $2
-      - COALESCE(SUM(
-          CASE WHEN shares > 0 THEN shares * avg_price ELSE 0 END
-        ), 0)
-      + COALESCE(SUM(
-          CASE WHEN shares < 0 THEN ABS(shares * avg_price) ELSE 0 END
-        ), 0)
+      - COALESCE(SUM(CASE WHEN shares > 0 THEN shares * avg_price END), 0)
+      + COALESCE(SUM(CASE WHEN shares < 0 THEN ABS(shares * avg_price) END), 0)
       AS balance
     FROM portfolios
     WHERE user_id = $1;
@@ -213,7 +206,7 @@ app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   POSITIONS (AGGREGATED)
+   POSITIONS
 ================================ */
 app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
