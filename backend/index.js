@@ -11,16 +11,15 @@ const PORT = process.env.PORT || 10000;
 const STARTING_BALANCE = 1000;
 
 /* ===============================
-   Middleware (FIXED CORS)
+   Middleware
 ================================ */
 app.use(
   cors({
     origin: "*",
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: "*", // ✅ THIS IS THE FIX
+    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
   })
 );
-
 app.options("*", cors());
 app.use(express.json());
 
@@ -56,52 +55,20 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Migration
+   SAFE ONE-TIME PATCH
+   (NO MIGRATIONS, NO DROPS)
 ================================ */
-async function migrate() {
-  await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
-
+async function patchSchema() {
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      privy_user_id TEXT UNIQUE NOT NULL,
-      email TEXT,
-      wallet_address TEXT,
-      realized_pnl NUMERIC NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS realized_pnl NUMERIC NOT NULL DEFAULT 0;
   `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS positions (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      market_id TEXT NOT NULL,
-      outcome TEXT NOT NULL,
-      shares NUMERIC NOT NULL,
-      avg_price NUMERIC NOT NULL,
-      UNIQUE (user_id, market_id, outcome)
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS trades (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      market_id TEXT NOT NULL,
-      outcome TEXT NOT NULL,
-      side TEXT CHECK (side IN ('buy','sell')),
-      shares NUMERIC NOT NULL,
-      price NUMERIC NOT NULL,
-      realized_pnl NUMERIC NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-
-  console.log("✅ Database ready");
+  console.log("✅ Schema patch verified");
 }
-
-await migrate();
+patchSchema().catch((e) => {
+  console.error("Schema patch failed", e);
+  process.exit(1);
+});
 
 /* ===============================
    Helpers
@@ -117,7 +84,7 @@ function getMarketPrice(marketId, outcome) {
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   const auth = req.headers.authorization;
-  if (!auth?.startsWith("Bearer ")) {
+  if (!auth || !auth.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Missing Authorization header" });
   }
 
@@ -153,7 +120,7 @@ app.post("/auth/privy", async (req, res) => {
 function requireBackendAuth(req, res, next) {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
+    if (!auth || !auth.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -169,7 +136,7 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   Trade
+   Trade (BUY / SELL)
 ================================ */
 app.post("/trade", requireBackendAuth, async (req, res) => {
   const { market_id, outcome, side, shares, price } = req.body;
@@ -285,7 +252,7 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Portfolio
+   PORTFOLIO
 ================================ */
 app.get("/portfolio", requireBackendAuth, async (req, res) => {
   const posRes = await pool.query(
