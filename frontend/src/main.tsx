@@ -40,7 +40,7 @@ function LoginPage() {
 }
 
 /* ===============================
-   📊 Portfolio + Trading Page
+   📊 Portfolio + Trade Page
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
@@ -49,16 +49,16 @@ function PortfolioPage() {
   const [balance, setBalance] = React.useState<number>(0);
   const [portfolio, setPortfolio] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [message, setMessage] = React.useState<string | null>(null);
 
-  /* ---- trade form ---- */
+  /* Trade inputs */
   const [marketId, setMarketId] = React.useState("");
   const [outcome, setOutcome] = React.useState("YES");
   const [shares, setShares] = React.useState(1);
   const [price, setPrice] = React.useState(0.5);
-  const [message, setMessage] = React.useState<string | null>(null);
 
   /* ===============================
-     Bootstrap auth + data
+     Bootstrap
   ================================ */
   React.useEffect(() => {
     let cancelled = false;
@@ -69,9 +69,9 @@ function PortfolioPage() {
       try {
         setLoading(true);
 
-        let token: string | null = localStorage.getItem("backend_token");
+        let stored = localStorage.getItem("backend_token");
 
-        if (!token) {
+        if (typeof stored !== "string") {
           let privyToken: string | null = null;
 
           for (let i = 0; i < 10; i++) {
@@ -83,28 +83,38 @@ function PortfolioPage() {
             await new Promise((r) => setTimeout(r, 300));
           }
 
-          if (!privyToken) throw new Error("Privy token unavailable");
+          if (typeof privyToken !== "string") {
+            throw new Error("Privy token unavailable");
+          }
 
           const authRes = await fetch(
             "https://predix-backend.onrender.com/auth/privy",
             {
               method: "POST",
-              headers: { Authorization: `Bearer ${privyToken}` },
+              headers: {
+                Authorization: `Bearer ${privyToken}`,
+              },
             }
           );
 
           const authJson = await authRes.json();
+
           if (!authRes.ok || typeof authJson.token !== "string") {
             throw new Error("Backend auth failed");
           }
 
-          token = authJson.token;
-          localStorage.setItem("backend_token", token);
+          stored = authJson.token;
+          localStorage.setItem("backend_token", stored);
         }
 
-        if (!cancelled) setBackendToken(token);
+        if (typeof stored !== "string") {
+          throw new Error("Backend token missing");
+        }
 
-        await refreshData(token);
+        if (!cancelled) {
+          setBackendToken(stored);
+          await refreshData(stored);
+        }
       } catch {
         localStorage.removeItem("backend_token");
       } finally {
@@ -119,7 +129,7 @@ function PortfolioPage() {
   }, [ready, authenticated, getAccessToken]);
 
   /* ===============================
-     Refresh portfolio + balance
+     Refresh Data
   ================================ */
   async function refreshData(token: string) {
     const [pRes, bRes] = await Promise.all([
@@ -139,10 +149,10 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     Trade helpers
+     Trade
   ================================ */
-  async function placeTrade(type: "buy" | "sell") {
-    if (!backendToken) return;
+  async function trade(type: "buy" | "sell") {
+    if (typeof backendToken !== "string") return;
 
     setMessage(null);
 
@@ -171,7 +181,7 @@ function PortfolioPage() {
       return;
     }
 
-    setMessage(type === "buy" ? "Buy executed" : "Sell executed");
+    setMessage(`${type.toUpperCase()} successful`);
     await refreshData(backendToken);
   }
 
@@ -183,10 +193,8 @@ function PortfolioPage() {
   return (
     <div style={{ padding: 20 }}>
       <h1>Portfolio</h1>
-
       <p><strong>Balance:</strong> {balance.toFixed(2)}</p>
 
-      {/* Trade Form */}
       <div style={{ border: "1px solid #333", padding: 12, marginBottom: 20 }}>
         <h3>Trade</h3>
 
@@ -208,8 +216,8 @@ function PortfolioPage() {
 
         <input
           type="number"
-          value={shares}
           min={1}
+          value={shares}
           onChange={(e) => setShares(Number(e.target.value))}
           style={{ width: "100%", marginBottom: 6 }}
         />
@@ -222,13 +230,12 @@ function PortfolioPage() {
           style={{ width: "100%", marginBottom: 10 }}
         />
 
-        <button onClick={() => placeTrade("buy")}>Buy</button>{" "}
-        <button onClick={() => placeTrade("sell")}>Sell</button>
+        <button onClick={() => trade("buy")}>Buy</button>{" "}
+        <button onClick={() => trade("sell")}>Sell</button>
 
         {message && <p style={{ marginTop: 8 }}>{message}</p>}
       </div>
 
-      {/* Positions */}
       <h3>Positions</h3>
       {portfolio.length === 0 && <p>No positions yet.</p>}
 
@@ -241,7 +248,6 @@ function PortfolioPage() {
       ))}
 
       <br />
-
       <button
         onClick={() => {
           localStorage.removeItem("backend_token");
