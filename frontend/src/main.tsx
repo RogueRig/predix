@@ -56,8 +56,11 @@ function PortfolioPage() {
   const [shares, setShares] = React.useState(10);
   const [price, setPrice] = React.useState(1);
 
+  // 🔐 request version guard (KEY FIX)
+  const requestVersion = React.useRef(0);
+
   /* ===============================
-     Backend Token (STRICT)
+     Backend Token
   ================================ */
   async function getBackendToken(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
@@ -93,62 +96,39 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     Balance (SAFE)
+     SINGLE SOURCE REFRESH (FIX)
   ================================ */
-  async function refreshBalance() {
-    try {
-      const token = await getBackendToken();
-      const res = await fetch(
-        "https://predix-backend.onrender.com/portfolio/meta",
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
+  async function refreshAll() {
+    const currentVersion = ++requestVersion.current;
+    const token = await getBackendToken();
 
-      if (!res.ok) return;
+    const [balRes, posRes] = await Promise.all([
+      fetch("https://predix-backend.onrender.com/portfolio/meta", {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      fetch("https://predix-backend.onrender.com/portfolio/positions", {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    ]);
 
-      const json = await res.json();
-      const next = Number(json.balance);
+    if (requestVersion.current !== currentVersion) return;
 
-      if (Number.isFinite(next)) {
-        setBalance(next);
+    if (balRes.ok) {
+      const b = await balRes.json();
+      if (typeof b.balance === "number") {
+        setBalance(b.balance);
       }
-    } catch {
-      // do nothing — never clobber balance
     }
-  }
 
-  /* ===============================
-     Positions (HARDENED)
-  ================================ */
-  async function refreshPositions() {
-    try {
-      const token = await getBackendToken();
-      const res = await fetch(
-        "https://predix-backend.onrender.com/portfolio/positions",
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-
-      if (!res.ok) return;
-
-      const json = await res.json();
-
+    if (posRes.ok) {
+      const p = await posRes.json();
       setPositions(
-        (json.positions || []).map((p: any) => ({
-          market_id: p.market_id,
-          outcome: p.outcome,
-          total_shares: Number.isFinite(Number(p.total_shares))
-            ? Number(p.total_shares)
-            : 0,
-          avg_price: Number.isFinite(Number(p.avg_price))
-            ? Number(p.avg_price)
-            : 0,
+        (p.positions || []).map((x: any) => ({
+          ...x,
+          total_shares: Number(x.total_shares),
+          avg_price: Number(x.avg_price),
         }))
       );
-    } catch {
-      // ignore
     }
   }
 
@@ -184,9 +164,7 @@ function PortfolioPage() {
       if (!res.ok) throw new Error(json.error || "Trade failed");
 
       setMessage(`Bought ${shares} @ ${price}`);
-
-      await refreshPositions();
-      await refreshBalance();
+      await refreshAll();
     } catch (e: any) {
       setError(e.message);
     }
@@ -197,12 +175,7 @@ function PortfolioPage() {
   ================================ */
   React.useEffect(() => {
     if (!ready || !authenticated) return;
-
-    (async () => {
-      await refreshBalance();
-      await refreshPositions();
-      setLoading(false);
-    })();
+    refreshAll().finally(() => setLoading(false));
   }, [ready, authenticated]);
 
   if (loading) return <p style={{ padding: 20 }}>Loading…</p>;
@@ -239,7 +212,7 @@ function PortfolioPage() {
         </div>
       ))}
 
-      <h2>Buy (Paper)</h2>
+      <h2>Buy</h2>
 
       <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
       <br />
