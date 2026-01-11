@@ -47,7 +47,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   SAFE MIGRATION (RENDER SAFE)
+   MIGRATION (SAFE)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -76,29 +76,19 @@ async function migrate() {
     );
   `);
 
-  // ✅ SAFE UNIQUE CONSTRAINT (NO "IF NOT EXISTS" BUG)
   await pool.query(`
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'portfolios_user_id_idempotency_key_key'
-      ) THEN
-        ALTER TABLE portfolios
-        ADD CONSTRAINT portfolios_user_id_idempotency_key_key
-        UNIQUE (user_id, idempotency_key);
-      END IF;
-    END$$;
+    CREATE UNIQUE INDEX IF NOT EXISTS portfolios_uid_idempo
+    ON portfolios(user_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
   `);
 
-  console.log("✅ Database migration complete");
+  console.log("✅ DB ready");
 }
 
 await migrate();
 
 /* ===============================
-   Auth
+   AUTH
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
@@ -116,7 +106,9 @@ app.post("/auth/privy", async (req, res) => {
       INSERT INTO users (privy_user_id, email, wallet_address)
       VALUES ($1,$2,$3)
       ON CONFLICT (privy_user_id)
-      DO UPDATE SET email = EXCLUDED.email
+      DO UPDATE SET
+        email = EXCLUDED.email,
+        wallet_address = EXCLUDED.wallet_address
       RETURNING id;
       `,
       [
@@ -140,7 +132,7 @@ app.post("/auth/privy", async (req, res) => {
 });
 
 /* ===============================
-   JWT Guard
+   JWT GUARD
 ================================ */
 function requireBackendAuth(req, res, next) {
   try {
@@ -149,11 +141,12 @@ function requireBackendAuth(req, res, next) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
-    req.userId = jwt.verify(
+    const decoded = jwt.verify(
       auth.replace("Bearer ", ""),
       process.env.BACKEND_JWT_SECRET
-    ).uid;
+    );
 
+    req.userId = decoded.uid;
     next();
   } catch {
     res.status(401).json({ error: "Invalid backend token" });
@@ -165,7 +158,6 @@ function requireBackendAuth(req, res, next) {
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
-
   try {
     const key = req.headers["idempotency-key"];
     if (typeof key !== "string") {
@@ -173,6 +165,10 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
     }
 
     const { market_id, outcome, shares, price } = req.body;
+    if (!market_id || !outcome || !shares || !price) {
+      return res.status(400).json({ error: "Invalid payload" });
+    }
+
     const cost = Number(shares) * Number(price);
 
     await client.query("BEGIN");
@@ -193,6 +189,7 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
       INSERT INTO portfolios
       (user_id, market_id, outcome, shares, avg_price, idempotency_key)
       VALUES ($1,$2,$3,$4,$5,$6)
+      ON CONFLICT (user_id, idempotency_key) DO NOTHING;
       `,
       [req.userId, market_id, outcome, shares, price, key]
     );
@@ -204,91 +201,30 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 
     await client.query("COMMIT");
 
-    res.json({ status: "filled", spent: cost });
+    res.json({ spent: cost });
   } catch (e) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: e.message });
+    console.error(e);
+    res.status(500).json({ error: "Trade failed" });
   } finally {
     client.release();
   }
 });
 
 /* ===============================
-   SELL (AGGREGATE-SAFE)
-================================ */
-app.post("/trade/sell", requireBackendAuth, async (req, res) => {
-  const client = await pool.connect();
-
-  try {
-    const key = req.headers["idempotency-key"];
-    if (typeof key !== "string") {
-      return res.status(400).json({ error: "Missing Idempotency-Key" });
-    }
-
-    const { market_id, outcome, shares, price } = req.body;
-    const qty = Number(shares);
-    const proceeds = qty * Number(price);
-
-    await client.query("BEGIN");
-
-    const rows = await client.query(
-      `
-      SELECT shares
-      FROM portfolios
-      WHERE user_id = $1 AND market_id = $2 AND outcome = $3
-      FOR UPDATE
-      `,
-      [req.userId, market_id, outcome]
-    );
-
-    const owned = rows.rows.reduce(
-      (sum, r) => sum + Number(r.shares),
-      0
-    );
-
-    if (owned < qty) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({ error: "Not enough shares" });
-    }
-
-    await client.query(
-      `
-      INSERT INTO portfolios
-      (user_id, market_id, outcome, shares, avg_price, idempotency_key)
-      VALUES ($1,$2,$3,$4,$5,$6)
-      `,
-      [req.userId, market_id, outcome, -qty, price, key]
-    );
-
-    await client.query(
-      `UPDATE users SET balance = balance + $1 WHERE id = $2`,
-      [proceeds, req.userId]
-    );
-
-    await client.query("COMMIT");
-
-    res.json({ status: "sold", received: proceeds });
-  } catch (e) {
-    await client.query("ROLLBACK");
-    res.status(500).json({ error: e.message });
-  } finally {
-    client.release();
-  }
-});
-
-/* ===============================
-   Balance
+   BALANCE (AUTHORITATIVE)
 ================================ */
 app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `SELECT balance FROM users WHERE id = $1`,
     [req.userId]
   );
+
   res.json({ balance: Number(rows[0]?.balance ?? 0) });
 });
 
 /* ===============================
-   Positions
+   POSITIONS (AUTHORITATIVE)
 ================================ */
 app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
@@ -296,8 +232,8 @@ app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
     SELECT
       market_id,
       outcome,
-      SUM(shares) AS shares,
-      ROUND(SUM(shares * avg_price) / NULLIF(SUM(shares),0), 4) AS avg_price
+      SUM(shares)::FLOAT AS total_shares,
+      (SUM(shares * avg_price) / NULLIF(SUM(shares),0))::FLOAT AS avg_price
     FROM portfolios
     WHERE user_id = $1
     GROUP BY market_id, outcome
@@ -311,11 +247,9 @@ app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Health
+   HEALTH
 ================================ */
-app.get("/", (_, res) => {
-  res.json({ ok: true });
-});
+app.get("/", (_, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
   console.log("🚀 Backend running");
