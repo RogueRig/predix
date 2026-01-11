@@ -48,7 +48,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   SAFE MIGRATION
+   SAFE MIGRATION (NO DATA LOSS)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -87,7 +87,7 @@ await migrate();
 app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith("Bearer ")) {
+    if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -129,7 +129,7 @@ app.post("/auth/privy", async (req, res) => {
 function requireBackendAuth(req, res, next) {
   try {
     const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith("Bearer ")) {
+    if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -145,69 +145,99 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   BUY TRADE (NO BALANCE MUTATION)
+   BUY TRADE
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
-  const client = await pool.connect();
+  const { market_id, outcome, shares, price } = req.body;
+  const key = req.headers["idempotency-key"];
 
-  try {
-    const key = req.headers["idempotency-key"];
-    if (typeof key !== "string") {
-      return res.status(400).json({ error: "Missing Idempotency-Key" });
-    }
-
-    const { market_id, outcome, shares, price } = req.body;
-    if (!market_id || !outcome || !shares || !price) {
-      return res.status(400).json({ error: "Invalid payload" });
-    }
-
-    await client.query("BEGIN");
-
-    await client.query(
-      `
-      INSERT INTO portfolios
-      (user_id, market_id, outcome, shares, avg_price, idempotency_key)
-      VALUES ($1,$2,$3,$4,$5,$6)
-      `,
-      [
-        req.userId,
-        market_id,
-        outcome,
-        Number(shares),
-        Number(price),
-        key,
-      ]
-    );
-
-    await client.query("COMMIT");
-
-    res.json({
-      status: "filled",
-      spent: Number(shares) * Number(price),
-    });
-  } catch (e) {
-    await client.query("ROLLBACK");
-    console.error(e);
-    res.status(500).json({ error: String(e) });
-  } finally {
-    client.release();
+  if (!market_id || !outcome || !shares || !price) {
+    return res.status(400).json({ error: "Invalid payload" });
   }
+  if (typeof key !== "string") {
+    return res.status(400).json({ error: "Missing Idempotency-Key" });
+  }
+
+  await pool.query(
+    `
+    INSERT INTO portfolios
+    (user_id, market_id, outcome, shares, avg_price, idempotency_key)
+    VALUES ($1,$2,$3,$4,$5,$6)
+    `,
+    [req.userId, market_id, outcome, Number(shares), Number(price), key]
+  );
+
+  res.json({
+    status: "filled",
+    spent: Number(shares) * Number(price),
+  });
 });
 
 /* ===============================
-   BALANCE (DERIVED – SOURCE OF TRUTH)
+   SELL TRADE (NEW ✅)
+================================ */
+app.post("/trade/sell", requireBackendAuth, async (req, res) => {
+  const { market_id, outcome, shares, price } = req.body;
+  const key = req.headers["idempotency-key"];
+
+  if (!market_id || !outcome || !shares || !price) {
+    return res.status(400).json({ error: "Invalid payload" });
+  }
+  if (typeof key !== "string") {
+    return res.status(400).json({ error: "Missing Idempotency-Key" });
+  }
+
+  // Check available shares (NO FOR UPDATE ON AGGREGATE)
+  const { rows } = await pool.query(
+    `
+    SELECT COALESCE(SUM(shares), 0) AS total_shares
+    FROM portfolios
+    WHERE user_id = $1 AND market_id = $2 AND outcome = $3
+    `,
+    [req.userId, market_id, outcome]
+  );
+
+  const available = Number(rows[0].total_shares);
+
+  if (available < Number(shares)) {
+    return res.status(400).json({
+      error: "Not enough shares to sell",
+      available,
+    });
+  }
+
+  await pool.query(
+    `
+    INSERT INTO portfolios
+    (user_id, market_id, outcome, shares, avg_price, idempotency_key)
+    VALUES ($1,$2,$3,$4,$5,$6)
+    `,
+    [
+      req.userId,
+      market_id,
+      outcome,
+      -Number(shares), // 👈 negative shares
+      Number(price),
+      key,
+    ]
+  );
+
+  res.json({
+    status: "sold",
+    received: Number(shares) * Number(price),
+  });
+});
+
+/* ===============================
+   PORTFOLIO BALANCE (DERIVED)
 ================================ */
 app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `
     SELECT
       $2
-      - COALESCE(SUM(
-          CASE WHEN shares > 0 THEN shares * avg_price ELSE 0 END
-        ), 0)
-      + COALESCE(SUM(
-          CASE WHEN shares < 0 THEN ABS(shares * avg_price) ELSE 0 END
-        ), 0)
+      - COALESCE(SUM(CASE WHEN shares > 0 THEN shares * avg_price END), 0)
+      + COALESCE(SUM(CASE WHEN shares < 0 THEN ABS(shares * avg_price) END), 0)
       AS balance
     FROM portfolios
     WHERE user_id = $1;
@@ -215,9 +245,7 @@ app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
     [req.userId, STARTING_BALANCE]
   );
 
-  res.json({
-    balance: Number(rows[0]?.balance ?? STARTING_BALANCE),
-  });
+  res.json({ balance: Number(rows[0].balance) });
 });
 
 /* ===============================
@@ -247,42 +275,6 @@ app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   DEV RESET (MOBILE SAFE)
-================================ */
-app.get("/dev/reset", async (req, res) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT id FROM users
-      ORDER BY created_at DESC
-      LIMIT 1
-    `);
-
-    if (!rows.length) {
-      return res.send("No user found");
-    }
-
-    const userId = rows[0].id;
-
-    await pool.query(`DELETE FROM portfolios WHERE user_id = $1`, [userId]);
-
-    res.send(`
-      <html>
-        <body style="font-family: system-ui; padding: 20px;">
-          <h2>✅ DEV RESET COMPLETE</h2>
-          <p>User ID: ${userId}</p>
-          <p>Balance reset to ${STARTING_BALANCE}</p>
-          <p>Positions cleared</p>
-          <p>Refresh the frontend now.</p>
-        </body>
-      </html>
-    `);
-  } catch (e) {
-    console.error(e);
-    res.status(500).send("Reset failed");
-  }
-});
-
-/* ===============================
    Health
 ================================ */
 app.get("/", (_, res) => {
@@ -290,5 +282,5 @@ app.get("/", (_, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log("🚀 Backend running on", PORT);
+  console.log("🚀 Backend running");
 });
