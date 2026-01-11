@@ -101,12 +101,10 @@ function Portfolio() {
   ================================ */
   async function refreshPortfolio() {
     const token = await getBackendToken();
-
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio",
       { headers: { Authorization: `Bearer ${token}` } }
     );
-
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || "Portfolio failed");
 
@@ -117,19 +115,16 @@ function Portfolio() {
   }
 
   /* ===============================
-     Trade History
+     Trades
   ================================ */
   async function refreshTrades() {
     const token = await getBackendToken();
-
     const res = await fetch(
       "https://predix-backend.onrender.com/trades",
       { headers: { Authorization: `Bearer ${token}` } }
     );
-
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || "Trades failed");
-
     setTrades(json.trades ?? []);
   }
 
@@ -184,7 +179,6 @@ function Portfolio() {
           : `Sold ${shares} @ ${price}`
       );
 
-      // 🔥 THIS WAS THE MISSING PIECE
       await refreshPortfolio();
       await refreshTrades();
     } catch (e: any) {
@@ -213,14 +207,20 @@ function Portfolio() {
 
       <h3>Trade History</h3>
       {trades.length === 0 && <p>No trades</p>}
-      {trades.map((t, i) => (
-        <div key={i}>
-          {t.side.toUpperCase()} {t.shares} {t.outcome} @ {t.price}
-          {t.realized_pnl !== 0 && ` | PnL ${t.realized_pnl.toFixed(2)}`}
-        </div>
-      ))}
+      {trades.map((t, i) => {
+        const realized =
+          typeof t.realized_pnl === "number" ? t.realized_pnl : 0;
+
+        return (
+          <div key={i}>
+            {t.side.toUpperCase()} {t.shares} {t.outcome} @ {t.price}
+            {t.side === "sell" && ` | PnL ${realized.toFixed(2)}`}
+          </div>
+        );
+      })}
 
       <h3>Trade</h3>
+
       <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
       <br />
       <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
