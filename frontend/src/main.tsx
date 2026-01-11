@@ -48,12 +48,10 @@ function PortfolioPage() {
   const tokenRef = React.useRef<string | null>(null);
 
   const [balance, setBalance] = React.useState<number>(0);
-  const [portfolio, setPortfolio] = React.useState<any[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [message, setMessage] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState<boolean>(true);
 
   /* ===============================
-     Bootstrap (STRICT NULL SAFE)
+     Bootstrap (ABSOLUTELY NULL SAFE)
   ================================ */
   React.useEffect(() => {
     let cancelled = false;
@@ -64,7 +62,7 @@ function PortfolioPage() {
       try {
         setLoading(true);
 
-        let token = localStorage.getItem("backend_token");
+        let token: string | null = localStorage.getItem("backend_token");
 
         if (token === null) {
           let privyToken: string | null = null;
@@ -92,30 +90,35 @@ function PortfolioPage() {
             }
           );
 
-          const authJson = await authRes.json();
+          const authJson: unknown = await authRes.json();
 
-          if (!authRes.ok || typeof authJson.token !== "string") {
+          if (
+            !authRes.ok ||
+            typeof authJson !== "object" ||
+            authJson === null ||
+            typeof (authJson as any).token !== "string"
+          ) {
             throw new Error("Backend auth failed");
           }
 
-          token = authJson.token;
+          token = (authJson as any).token;
           localStorage.setItem("backend_token", token);
         }
 
-        // ✅ HARD NARROWING — THIS IS THE FIX
+        // 🔒 FINAL HARD GUARANTEE
         if (typeof token !== "string") {
           throw new Error("Backend token missing");
         }
 
         const safeToken: string = token;
-
         tokenRef.current = safeToken;
 
         if (!cancelled) {
-          await refreshAll(safeToken);
+          await refreshBalance(safeToken);
         }
       } catch {
         localStorage.removeItem("backend_token");
+        tokenRef.current = null;
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -128,31 +131,50 @@ function PortfolioPage() {
   }, [ready, authenticated, getAccessToken]);
 
   /* ===============================
-     Data Refresh
+     Balance Refresh (STRING ONLY)
   ================================ */
-  async function refreshAll(token: string) {
-    const [pRes, mRes] = await Promise.all([
-      fetch("https://predix-backend.onrender.com/portfolio", {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch("https://predix-backend.onrender.com/portfolio/meta", {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-    ]);
+  async function refreshBalance(token: string) {
+    const res = await fetch(
+      "https://predix-backend.onrender.com/portfolio/meta",
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
 
-    const pJson = await pRes.json();
-    const mJson = await mRes.json();
+    const json: unknown = await res.json();
 
-    setPortfolio(Array.isArray(pJson.portfolio) ? pJson.portfolio : []);
-    setBalance(typeof mJson.balance === "number" ? mJson.balance : 0);
+    if (
+      typeof json === "object" &&
+      json !== null &&
+      typeof (json as any).balance === "number"
+    ) {
+      setBalance((json as any).balance);
+    } else {
+      setBalance(0);
+    }
   }
 
-  if (loading) return <p style={{ padding: 20 }}>Loading…</p>;
+  if (loading) {
+    return <p style={{ padding: 20 }}>Loading…</p>;
+  }
 
   return (
     <div style={{ padding: 20 }}>
       <h1>Portfolio</h1>
-      <p><strong>Balance:</strong> {balance.toFixed(2)}</p>
+
+      <div
+        style={{
+          background: "#111",
+          color: "#fff",
+          padding: 16,
+          borderRadius: 12,
+          marginBottom: 20,
+        }}
+      >
+        <strong>Balance:</strong> {balance.toFixed(2)}
+      </div>
 
       <button
         onClick={() => {
@@ -192,7 +214,9 @@ function App() {
 /* ===============================
    🔌 Mount
 ================================ */
-ReactDOM.createRoot(document.getElementById("root")!).render(
+ReactDOM.createRoot(
+  document.getElementById("root") as HTMLElement
+).render(
   <PrivyProvider
     appId="cmk602oo400ebjs0cgw0vbbao"
     config={{ loginMethods: ["email", "wallet"] }}
