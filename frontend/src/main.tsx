@@ -40,31 +40,21 @@ function LoginPage() {
 }
 
 /* ===============================
-   Types
-================================ */
-type Position = {
-  market_id: string;
-  outcome: string;
-  total_shares: number;
-  avg_price: number;
-};
-
-/* ===============================
    Portfolio Page
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
-  const [balance, setBalance] = React.useState(0);
-  const [positions, setPositions] = React.useState<Position[]>([]);
+  const [balance, setBalance] = React.useState<number>(0);
+  const [positions, setPositions] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<string | null>(null);
 
   const [marketId, setMarketId] = React.useState("test-market");
   const [outcome, setOutcome] = React.useState("YES");
-  const [shares, setShares] = React.useState(10);
-  const [price, setPrice] = React.useState(1);
+  const [shares, setShares] = React.useState<number>(10);
+  const [price, setPrice] = React.useState<number>(1);
 
   /* ===============================
      Backend Token
@@ -73,16 +63,7 @@ function PortfolioPage() {
     const cached = localStorage.getItem("backend_token");
     if (cached) return cached;
 
-    let privyToken: string | null = null;
-    for (let i = 0; i < 10; i++) {
-      const t = await getAccessToken();
-      if (typeof t === "string") {
-        privyToken = t;
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 300));
-    }
-
+    const privyToken = await getAccessToken();
     if (!privyToken) throw new Error("Privy token unavailable");
 
     const res = await fetch(
@@ -94,46 +75,37 @@ function PortfolioPage() {
     );
 
     const json = await res.json();
-    if (!res.ok || typeof json.token !== "string") {
-      throw new Error("Backend auth failed");
-    }
+    if (!json.token) throw new Error("Backend auth failed");
 
     localStorage.setItem("backend_token", json.token);
     return json.token;
   }
 
   /* ===============================
-     Sync from backend (SAFE)
+     Initial Load (ONLY PLACE WE REFRESH)
   ================================ */
-  async function syncFromBackend(token: string) {
-    const [balRes, posRes] = await Promise.all([
-      fetch("https://predix-backend.onrender.com/portfolio/meta", {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch("https://predix-backend.onrender.com/portfolio/positions", {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-    ]);
+  async function loadPortfolio() {
+    const token = await getBackendToken();
+
+    const balRes = await fetch(
+      "https://predix-backend.onrender.com/portfolio/meta",
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    const posRes = await fetch(
+      "https://predix-backend.onrender.com/portfolio/positions",
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
 
     const balJson = await balRes.json();
     const posJson = await posRes.json();
 
-    setBalance(Number(balJson.balance) || 0);
-
-    const safePositions: Position[] = (posJson.positions || []).map(
-      (p: any) => ({
-        market_id: String(p.market_id),
-        outcome: String(p.outcome),
-        total_shares: Number(p.total_shares) || 0,
-        avg_price: Number(p.avg_price) || 0,
-      })
-    );
-
-    setPositions(safePositions);
+    setBalance(Number(balJson.balance || 0));
+    setPositions(posJson.positions || []);
   }
 
   /* ===============================
-     BUY (OPTIMISTIC + SYNC)
+     BUY (NO RE-FETCH)
   ================================ */
   async function buy() {
     try {
@@ -149,7 +121,8 @@ function PortfolioPage() {
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
-            "Idempotency-Key": crypto.randomUUID(),
+            "Idempotency-Key":
+              crypto.randomUUID?.() ?? `mobile-${Date.now()}`,
           },
           body: JSON.stringify({
             market_id: marketId,
@@ -163,42 +136,17 @@ function PortfolioPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Trade failed");
 
-      // ✅ IMMEDIATE UI UPDATE (NO RACE)
+      // ✅ SINGLE SOURCE OF TRUTH
       setBalance((b) => b - json.spent);
-
-      setPositions((prev) => {
-        const next = [...prev];
-        const idx = next.findIndex(
-          (p) => p.market_id === marketId && p.outcome === outcome
-        );
-
-        if (idx >= 0) {
-          const p = next[idx];
-          const totalCost =
-            p.total_shares * p.avg_price + shares * price;
-          const newShares = p.total_shares + shares;
-
-          next[idx] = {
-            ...p,
-            total_shares: newShares,
-            avg_price: totalCost / newShares,
-          };
-        } else {
-          next.push({
-            market_id: marketId,
-            outcome,
-            total_shares: shares,
-            avg_price: price,
-          });
-        }
-
-        return next;
-      });
-
       setMessage(`Bought ${shares} @ ${price}`);
 
-      // 🔄 BACKGROUND SYNC (SOURCE OF TRUTH)
-      setTimeout(() => syncFromBackend(token), 300);
+      // Reload positions only
+      const posRes = await fetch(
+        "https://predix-backend.onrender.com/portfolio/positions",
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const posJson = await posRes.json();
+      setPositions(posJson.positions || []);
     } catch (e: any) {
       setError(e.message);
     }
@@ -206,12 +154,7 @@ function PortfolioPage() {
 
   React.useEffect(() => {
     if (!ready || !authenticated) return;
-
-    (async () => {
-      const token = await getBackendToken();
-      await syncFromBackend(token);
-      setLoading(false);
-    })();
+    loadPortfolio().finally(() => setLoading(false));
   }, [ready, authenticated]);
 
   if (loading) return <p style={{ padding: 20 }}>Loading…</p>;
@@ -220,37 +163,18 @@ function PortfolioPage() {
     <div style={{ padding: 20 }}>
       <h1>Portfolio</h1>
 
-      <div
-        style={{
-          background: "#111",
-          color: "#fff",
-          padding: 16,
-          borderRadius: 12,
-          marginBottom: 20,
-        }}
-      >
+      <div style={{ background: "#111", color: "#fff", padding: 16 }}>
         <strong>Balance:</strong> {balance.toFixed(2)}
       </div>
 
       <h2>Positions</h2>
-
-      {positions.length === 0 && <p>No positions</p>}
-
       {positions.map((p, i) => (
-        <div
-          key={i}
-          style={{
-            border: "1px solid #333",
-            padding: 12,
-            borderRadius: 10,
-            marginBottom: 12,
-          }}
-        >
+        <div key={i} style={{ border: "1px solid #333", padding: 10 }}>
           <strong>
             {p.market_id} — {p.outcome}
           </strong>
           <div>Shares: {p.total_shares}</div>
-          <div>Avg Price: {p.avg_price.toFixed(4)}</div>
+          <div>Avg Price: {Number(p.avg_price).toFixed(4)}</div>
         </div>
       ))}
 
@@ -258,23 +182,27 @@ function PortfolioPage() {
 
       <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
       <br />
+
       <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
         <option>YES</option>
         <option>NO</option>
       </select>
       <br />
+
       <input
         type="number"
         value={shares}
         onChange={(e) => setShares(Number(e.target.value))}
       />
       <br />
+
       <input
         type="number"
         value={price}
         onChange={(e) => setPrice(Number(e.target.value))}
       />
       <br />
+
       <button onClick={buy}>Buy</button>
 
       {message && <p style={{ color: "green" }}>{message}</p>}
@@ -294,7 +222,7 @@ function PortfolioPage() {
 }
 
 /* ===============================
-   App Root
+   App
 ================================ */
 function App() {
   return (
@@ -309,7 +237,6 @@ function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );
@@ -318,9 +245,7 @@ function App() {
 /* ===============================
    Mount
 ================================ */
-ReactDOM.createRoot(
-  document.getElementById("root") as HTMLElement
-).render(
+ReactDOM.createRoot(document.getElementById("root")!).render(
   <PrivyProvider
     appId="cmk602oo400ebjs0cgw0vbbao"
     config={{ loginMethods: ["email", "wallet"] }}
