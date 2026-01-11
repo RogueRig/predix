@@ -55,13 +55,14 @@ function PortfolioPage() {
   const [price, setPrice] = React.useState(1);
 
   /* ===============================
-     Backend Token (SAFE)
+     Backend Token (MOBILE SAFE)
   ================================ */
   async function getBackendToken(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
     if (typeof cached === "string") return cached;
 
     let privyToken: string | null = null;
+
     for (let i = 0; i < 10; i++) {
       const t = await getAccessToken();
       if (typeof t === "string") {
@@ -71,17 +72,22 @@ function PortfolioPage() {
       await new Promise((r) => setTimeout(r, 300));
     }
 
-    if (!privyToken) throw new Error("Privy token unavailable");
+    if (!privyToken) {
+      throw new Error("Privy token unavailable");
+    }
 
     const res = await fetch(
       "https://predix-backend.onrender.com/auth/privy",
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${privyToken}` },
+        headers: {
+          Authorization: `Bearer ${privyToken}`,
+        },
       }
     );
 
     const json = await res.json();
+
     if (!res.ok || typeof json.token !== "string") {
       throw new Error("Backend auth failed");
     }
@@ -95,23 +101,31 @@ function PortfolioPage() {
   ================================ */
   async function refreshBalance() {
     const token = await getBackendToken();
+
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio/meta",
       {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       }
     );
+
     const json = await res.json();
     setBalance(Number(json.balance) || 0);
   }
 
   /* ===============================
-     BUY (ROBUST)
+     BUY (MOBILE SAFE)
   ================================ */
   async function buy() {
     try {
       setError(null);
       const token = await getBackendToken();
+
+      // ✅ MOBILE-SAFE idempotency key (NO crypto.randomUUID)
+      const idempotencyKey =
+        "mobile-" + Date.now().toString() + "-" + Math.random().toString(36);
 
       const res = await fetch(
         "https://predix-backend.onrender.com/trade/buy",
@@ -120,10 +134,7 @@ function PortfolioPage() {
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
-            "Idempotency-Key":
-              typeof crypto !== "undefined" && crypto.randomUUID
-                ? crypto.randomUUID()
-                : `mobile-${Date.now()}`,
+            "Idempotency-Key": idempotencyKey,
           },
           body: JSON.stringify({
             market_id: marketId,
@@ -151,7 +162,7 @@ function PortfolioPage() {
 
       await refreshBalance();
     } catch (e: any) {
-      setError(e.message);
+      setError(e.message || "Trade failed");
     }
   }
 
@@ -181,7 +192,10 @@ function PortfolioPage() {
       <div style={{ border: "1px solid #333", padding: 16, borderRadius: 10 }}>
         <h3>Trade (Paper)</h3>
 
-        <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
+        <input
+          value={marketId}
+          onChange={(e) => setMarketId(e.target.value)}
+        />
         <br />
 
         <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
@@ -210,6 +224,7 @@ function PortfolioPage() {
       </div>
 
       <br />
+
       <button
         onClick={() => {
           localStorage.removeItem("backend_token");
