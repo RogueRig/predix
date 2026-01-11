@@ -113,7 +113,7 @@ await migrate();
 /* ===============================
    Helpers
 ================================ */
-function getMarketPrice(marketId: string, outcome: string): number {
+function getMarketPrice(marketId, outcome) {
   if (outcome === "YES") return 0.62;
   if (outcome === "NO") return 0.38;
   return 0;
@@ -283,7 +283,7 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
     await client.query("COMMIT");
 
     res.json({ ok: true, realized_pnl: realizedPnl });
-  } catch (e: any) {
+  } catch (e) {
     await client.query("ROLLBACK");
     res.status(400).json({ error: e.message });
   } finally {
