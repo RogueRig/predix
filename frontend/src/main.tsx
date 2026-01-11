@@ -26,9 +26,7 @@ function Login() {
   const navigate = useNavigate();
 
   React.useEffect(() => {
-    if (ready && authenticated) {
-      navigate("/portfolio", { replace: true });
-    }
+    if (ready && authenticated) navigate("/portfolio", { replace: true });
   }, [ready, authenticated, navigate]);
 
   if (!ready) return <p style={{ padding: 20 }}>Loading…</p>;
@@ -58,7 +56,7 @@ function Portfolio() {
   const [price, setPrice] = React.useState(1);
 
   /* ===============================
-     TOKENS (ROBUST)
+     TOKEN HELPERS
   ================================ */
   async function getPrivyToken(): Promise<string> {
     for (let i = 0; i < 10; i++) {
@@ -69,9 +67,11 @@ function Portfolio() {
     throw new Error("Privy token unavailable");
   }
 
-  async function getBackendToken(): Promise<string> {
-    const cached = localStorage.getItem("backend_token");
-    if (cached) return cached;
+  async function getBackendToken(force = false): Promise<string> {
+    if (!force) {
+      const cached = localStorage.getItem("backend_token");
+      if (cached) return cached;
+    }
 
     const privyToken = await getPrivyToken();
     const res = await fetch(
@@ -92,21 +92,35 @@ function Portfolio() {
   }
 
   /* ===============================
-     SAFE FETCH
+     SAFE AUTH FETCH (1 RETRY)
   ================================ */
-  async function authedFetch(url: string, options: RequestInit = {}) {
+  async function authedFetch(
+    url: string,
+    options: RequestInit = {},
+    retried = false
+  ): Promise<Response> {
     try {
       const token = await getBackendToken();
-      return await fetch(url, {
+      const res = await fetch(url, {
         ...options,
         headers: {
           ...(options.headers || {}),
           Authorization: `Bearer ${token}`,
         },
       });
-    } catch {
-      localStorage.removeItem("backend_token");
-      throw new Error("Auth reset");
+
+      if (res.status === 401 && !retried) {
+        localStorage.removeItem("backend_token");
+        return authedFetch(url, options, true);
+      }
+
+      return res;
+    } catch (e) {
+      if (!retried) {
+        localStorage.removeItem("backend_token");
+        return authedFetch(url, options, true);
+      }
+      throw e;
     }
   }
 
@@ -119,8 +133,7 @@ function Portfolio() {
     );
 
     if (!res.ok) {
-      localStorage.removeItem("backend_token");
-      throw new Error("Session expired");
+      throw new Error("Failed to load portfolio");
     }
 
     const json = await res.json();
@@ -200,9 +213,17 @@ function Portfolio() {
         <option>NO</option>
       </select>
       <br />
-      <input type="number" value={shares} onChange={(e) => setShares(+e.target.value)} />
+      <input
+        type="number"
+        value={shares}
+        onChange={(e) => setShares(+e.target.value)}
+      />
       <br />
-      <input type="number" value={price} onChange={(e) => setPrice(+e.target.value)} />
+      <input
+        type="number"
+        value={price}
+        onChange={(e) => setPrice(+e.target.value)}
+      />
       <br />
 
       <button onClick={() => trade("buy")}>Buy</button>
