@@ -55,20 +55,63 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   SAFE ONE-TIME PATCH
-   (NO MIGRATIONS, NO DROPS)
+   MIGRATION (IDEMPOTENT & SAFE)
 ================================ */
-async function patchSchema() {
+async function migrate() {
+  await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      privy_user_id TEXT UNIQUE NOT NULL,
+      email TEXT,
+      wallet_address TEXT,
+      realized_pnl NUMERIC NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS positions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      market_id TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      shares NUMERIC NOT NULL,
+      avg_price NUMERIC NOT NULL,
+      UNIQUE (user_id, market_id, outcome)
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS trades (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      market_id TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      side TEXT CHECK (side IN ('buy','sell')),
+      shares NUMERIC NOT NULL,
+      price NUMERIC NOT NULL,
+      realized_pnl NUMERIC NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  /* 🔒 SCHEMA DRIFT FIXES */
+  await pool.query(`
+    ALTER TABLE trades
+    ADD COLUMN IF NOT EXISTS outcome TEXT;
+  `);
+
   await pool.query(`
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS realized_pnl NUMERIC NOT NULL DEFAULT 0;
   `);
-  console.log("✅ Schema patch verified");
+
+  console.log("✅ Database migrated safely");
 }
-patchSchema().catch((e) => {
-  console.error("Schema patch failed", e);
-  process.exit(1);
-});
+
+await migrate();
 
 /* ===============================
    Helpers
@@ -84,7 +127,7 @@ function getMarketPrice(marketId, outcome) {
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith("Bearer ")) {
+  if (!auth?.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Missing Authorization header" });
   }
 
@@ -120,7 +163,7 @@ app.post("/auth/privy", async (req, res) => {
 function requireBackendAuth(req, res, next) {
   try {
     const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith("Bearer ")) {
+    if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -136,12 +179,14 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   Trade (BUY / SELL)
+   Trade
 ================================ */
 app.post("/trade", requireBackendAuth, async (req, res) => {
-  const { market_id, outcome, side, shares, price } = req.body;
+  const { market_id, outcome, shares, price } = req.body;
+  const side = shares > 0 ? "buy" : "sell";
+  const qty = Math.abs(Number(shares));
 
-  if (!market_id || !outcome || !side || !shares || !price) {
+  if (!market_id || !outcome || !qty || !price) {
     return res.status(400).json({ error: "Invalid payload" });
   }
 
@@ -166,18 +211,16 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
       if (posRes.rows.length === 0) {
         await client.query(
           `
-          INSERT INTO positions
-          (user_id, market_id, outcome, shares, avg_price)
+          INSERT INTO positions (user_id, market_id, outcome, shares, avg_price)
           VALUES ($1,$2,$3,$4,$5)
           `,
-          [req.userId, market_id, outcome, shares, price]
+          [req.userId, market_id, outcome, qty, price]
         );
       } else {
         const cur = posRes.rows[0];
-        const newShares = Number(cur.shares) + Number(shares);
+        const newShares = Number(cur.shares) + qty;
         const newAvg =
-          (Number(cur.shares) * Number(cur.avg_price) +
-            Number(shares) * Number(price)) /
+          (Number(cur.shares) * Number(cur.avg_price) + qty * price) /
           newShares;
 
         await client.query(
@@ -189,60 +232,47 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
           [newShares, newAvg, req.userId, market_id, outcome]
         );
       }
-    }
-
-    if (side === "sell") {
-      if (posRes.rows.length === 0 || Number(posRes.rows[0].shares) < shares) {
+    } else {
+      if (posRes.rows.length === 0 || Number(posRes.rows[0].shares) < qty) {
         throw new Error("Insufficient shares");
       }
 
       const cur = posRes.rows[0];
-      realizedPnl =
-        (Number(price) - Number(cur.avg_price)) * Number(shares);
+      realizedPnl = (price - cur.avg_price) * qty;
 
-      const remaining = Number(cur.shares) - Number(shares);
+      const remaining = Number(cur.shares) - qty;
 
       if (remaining === 0) {
         await client.query(
-          `
-          DELETE FROM positions
-          WHERE user_id = $1 AND market_id = $2 AND outcome = $3
-          `,
+          `DELETE FROM positions WHERE user_id=$1 AND market_id=$2 AND outcome=$3`,
           [req.userId, market_id, outcome]
         );
       } else {
         await client.query(
           `
-          UPDATE positions
-          SET shares = $1
-          WHERE user_id = $2 AND market_id = $3 AND outcome = $4
+          UPDATE positions SET shares=$1
+          WHERE user_id=$2 AND market_id=$3 AND outcome=$4
           `,
           [remaining, req.userId, market_id, outcome]
         );
       }
 
       await client.query(
-        `
-        UPDATE users
-        SET realized_pnl = realized_pnl + $1
-        WHERE id = $2
-        `,
+        `UPDATE users SET realized_pnl = realized_pnl + $1 WHERE id = $2`,
         [realizedPnl, req.userId]
       );
     }
 
     await client.query(
       `
-      INSERT INTO trades
-      (user_id, market_id, outcome, side, shares, price, realized_pnl)
+      INSERT INTO trades (user_id, market_id, outcome, side, shares, price, realized_pnl)
       VALUES ($1,$2,$3,$4,$5,$6,$7)
       `,
-      [req.userId, market_id, outcome, side, shares, price, realizedPnl]
+      [req.userId, market_id, outcome, side, qty, price, realizedPnl]
     );
 
     await client.query("COMMIT");
-
-    res.json({ ok: true, realized_pnl: realizedPnl });
+    res.json({ ok: true });
   } catch (e) {
     await client.query("ROLLBACK");
     res.status(400).json({ error: e.message });
@@ -252,34 +282,30 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   PORTFOLIO
+   Portfolio
 ================================ */
 app.get("/portfolio", requireBackendAuth, async (req, res) => {
   const posRes = await pool.query(
-    `
-    SELECT market_id, outcome, shares, avg_price
-    FROM positions
-    WHERE user_id = $1
-    `,
+    `SELECT market_id, outcome, shares, avg_price FROM positions WHERE user_id=$1`,
     [req.userId]
   );
 
   const userRes = await pool.query(
-    `SELECT realized_pnl FROM users WHERE id = $1`,
+    `SELECT realized_pnl FROM users WHERE id=$1`,
     [req.userId]
   );
 
-  let unrealizedPnl = 0;
+  let unrealized = 0;
   let invested = 0;
 
   const positions = posRes.rows.map((p) => {
     const price = getMarketPrice(p.market_id, p.outcome);
-    const value = Number(p.shares) * price;
-    const cost = Number(p.shares) * Number(p.avg_price);
+    const value = p.shares * price;
+    const cost = p.shares * p.avg_price;
     const u = value - cost;
 
     invested += cost;
-    unrealizedPnl += u;
+    unrealized += u;
 
     return {
       market_id: p.market_id,
@@ -292,13 +318,13 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
     };
   });
 
-  const realizedPnl = Number(userRes.rows[0]?.realized_pnl ?? 0);
-  const balance = STARTING_BALANCE + realizedPnl - invested;
+  const realized = Number(userRes.rows[0]?.realized_pnl ?? 0);
+  const balance = STARTING_BALANCE + realized - invested;
 
   res.json({
     balance,
-    realized_pnl: realizedPnl,
-    unrealized_pnl: unrealizedPnl,
+    realized_pnl: realized,
+    unrealized_pnl: unrealized,
     positions,
   });
 });
@@ -308,6 +334,4 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 ================================ */
 app.get("/", (_, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => {
-  console.log("🚀 Backend running");
-});
+app.listen(PORT, () => console.log("🚀 Backend running"));
