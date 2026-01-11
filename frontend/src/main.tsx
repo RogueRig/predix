@@ -97,7 +97,7 @@ function Portfolio() {
   }
 
   /* ===============================
-     Load Portfolio
+     Portfolio
   ================================ */
   async function refreshPortfolio() {
     const token = await getBackendToken();
@@ -108,7 +108,7 @@ function Portfolio() {
     );
 
     const json = await res.json();
-    if (!res.ok) throw new Error(json.error || "Failed to load portfolio");
+    if (!res.ok) throw new Error(json.error || "Portfolio failed");
 
     setBalance(Number(json.balance ?? 0));
     setRealizedPnL(Number(json.realized_pnl ?? 0));
@@ -117,26 +117,34 @@ function Portfolio() {
   }
 
   /* ===============================
-     Load Trades (SAFE)
+     Trade History
   ================================ */
   async function refreshTrades() {
-    try {
-      const token = await getBackendToken();
-      const res = await fetch(
-        "https://predix-backend.onrender.com/trades",
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!res.ok) return;
-      const json = await res.json();
-      setTrades(json.trades ?? []);
-    } catch {
-      /* silently ignore – feature safe */
-    }
+    const token = await getBackendToken();
+
+    const res = await fetch(
+      "https://predix-backend.onrender.com/trades",
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Trades failed");
+
+    setTrades(json.trades ?? []);
   }
 
+  /* ===============================
+     Initial Load
+  ================================ */
   React.useEffect(() => {
-    refreshPortfolio().catch((e) => setError(e.message));
-    refreshTrades();
+    (async () => {
+      try {
+        await refreshPortfolio();
+        await refreshTrades();
+      } catch (e: any) {
+        setError(e.message);
+      }
+    })();
   }, []);
 
   /* ===============================
@@ -176,105 +184,4 @@ function Portfolio() {
           : `Sold ${shares} @ ${price}`
       );
 
-      await refreshPortfolio();
-      await refreshTrades();
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }
-
-  return (
-    <div style={{ padding: 20 }}>
-      <h2>Balance: {balance.toFixed(2)}</h2>
-      <div>Realized PnL: {realizedPnL.toFixed(2)}</div>
-      <div>Unrealized PnL: {unrealizedPnL.toFixed(2)}</div>
-
-      <h3>Positions</h3>
-      {positions.length === 0 && <p>No positions</p>}
-      {positions.map((p, i) => (
-        <div key={i} style={{ border: "1px solid #333", padding: 12 }}>
-          <strong>{p.market_id} — {p.outcome}</strong>
-          <div>Shares: {p.shares}</div>
-          <div>Avg Price: {p.avg_price.toFixed(4)}</div>
-          <div>Value: {p.position_value.toFixed(2)}</div>
-          <div>Unrealized PnL: {p.unrealized_pnl.toFixed(2)}</div>
-        </div>
-      ))}
-
-      <h3>Trade</h3>
-      <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
-      <br />
-      <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
-        <option value="YES">YES</option>
-        <option value="NO">NO</option>
-      </select>
-      <br />
-      <input type="number" value={shares} onChange={(e) => setShares(+e.target.value)} />
-      <br />
-      <input type="number" value={price} onChange={(e) => setPrice(+e.target.value)} />
-      <br />
-      <button onClick={() => trade("buy")}>Buy</button>
-      <button onClick={() => trade("sell")} style={{ marginLeft: 10 }}>Sell</button>
-
-      {message && <p style={{ color: "green" }}>{message}</p>}
-      {error && <p style={{ color: "red" }}>{error}</p>}
-
-      <h3>Trade History</h3>
-      {trades.length === 0 && <p>No trades yet</p>}
-      {trades.map((t, i) => (
-        <div key={i} style={{ borderBottom: "1px solid #444", padding: 8 }}>
-          {t.side.toUpperCase()} {t.shares} {t.outcome} @ {t.price}
-          {t.realized_pnl !== 0 && (
-            <span> | PnL: {Number(t.realized_pnl).toFixed(2)}</span>
-          )}
-        </div>
-      ))}
-
-      <br />
-      <button
-        onClick={() => {
-          localStorage.removeItem("backend_token");
-          logout();
-        }}
-      >
-        Logout
-      </button>
-    </div>
-  );
-}
-
-/* ===============================
-   App
-================================ */
-function App() {
-  return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Login />} />
-        <Route
-          path="/portfolio"
-          element={
-            <Protected>
-              <Portfolio />
-            </Protected>
-          }
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
-  );
-}
-
-/* ===============================
-   Mount
-================================ */
-ReactDOM.createRoot(
-  document.getElementById("root") as HTMLElement
-).render(
-  <PrivyProvider
-    appId="cmk602oo400ebjs0cgw0vbbao"
-    config={{ loginMethods: ["email", "wallet"] }}
-  >
-    <App />
-  </PrivyProvider>
-);
+      // 🔥 THIS WAS THE MISSING
