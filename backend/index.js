@@ -8,6 +8,7 @@ const { Pool } = pkg;
 
 const app = express();
 const PORT = process.env.PORT || 10000;
+const STARTING_BALANCE = 1000;
 
 /* ===============================
    Middleware
@@ -47,7 +48,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   MIGRATION (SAFE)
+   SAFE MIGRATION (NO DATA LOSS)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -71,8 +72,8 @@ async function migrate() {
       outcome TEXT NOT NULL,
       shares NUMERIC NOT NULL,
       avg_price NUMERIC NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      idempotency_key TEXT
+      idempotency_key TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
 
@@ -82,12 +83,12 @@ async function migrate() {
 await migrate();
 
 /* ===============================
-   Auth (FIXES BALANCE = 0)
+   Auth
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
+    if (!auth || !auth.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -101,7 +102,7 @@ app.post("/auth/privy", async (req, res) => {
       VALUES ($1,$2,$3)
       ON CONFLICT (privy_user_id)
       DO UPDATE SET email = EXCLUDED.email
-      RETURNING id, balance;
+      RETURNING id;
       `,
       [
         verified.userId,
@@ -109,14 +110,6 @@ app.post("/auth/privy", async (req, res) => {
         verified.wallet?.address ?? null,
       ]
     );
-
-    // 🔥 DEV FIX: restore balance if accidentally zero
-    if (Number(rows[0].balance) === 0) {
-      await pool.query(
-        `UPDATE users SET balance = 1000 WHERE id = $1`,
-        [rows[0].id]
-      );
-    }
 
     const token = jwt.sign(
       { uid: rows[0].id },
@@ -137,7 +130,7 @@ app.post("/auth/privy", async (req, res) => {
 function requireBackendAuth(req, res, next) {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
+    if (!auth || !auth.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -169,20 +162,7 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
       return res.status(400).json({ error: "Invalid payload" });
     }
 
-    const cost = Number(shares) * Number(price);
-
     await client.query("BEGIN");
-
-    const balRes = await client.query(
-      `SELECT balance FROM users WHERE id = $1 FOR UPDATE`,
-      [req.userId]
-    );
-
-    const balance = Number(balRes.rows[0].balance);
-    if (balance < cost) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({ error: "Insufficient balance" });
-    }
 
     await client.query(
       `
@@ -190,39 +170,50 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
       (user_id, market_id, outcome, shares, avg_price, idempotency_key)
       VALUES ($1,$2,$3,$4,$5,$6)
       `,
-      [req.userId, market_id, outcome, shares, price, key]
-    );
-
-    await client.query(
-      `UPDATE users SET balance = balance - $1 WHERE id = $2`,
-      [cost, req.userId]
+      [req.userId, market_id, outcome, Number(shares), Number(price), key]
     );
 
     await client.query("COMMIT");
 
-    res.json({ status: "filled", spent: cost });
+    res.json({
+      status: "filled",
+      spent: Number(shares) * Number(price),
+    });
   } catch (e) {
     await client.query("ROLLBACK");
     console.error(e);
-    res.status(500).json({ error: "Trade failed" });
+    res.status(500).json({ error: String(e) });
   } finally {
     client.release();
   }
 });
 
 /* ===============================
-   Balance
+   PORTFOLIO BALANCE (DERIVED)
 ================================ */
 app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT balance FROM users WHERE id = $1`,
-    [req.userId]
+    `
+    SELECT
+      $2
+      - COALESCE(SUM(
+          CASE WHEN shares > 0 THEN shares * avg_price ELSE 0 END
+        ), 0)
+      + COALESCE(SUM(
+          CASE WHEN shares < 0 THEN ABS(shares * avg_price) ELSE 0 END
+        ), 0)
+      AS balance
+    FROM portfolios
+    WHERE user_id = $1;
+    `,
+    [req.userId, STARTING_BALANCE]
   );
-  res.json({ balance: Number(rows[0]?.balance ?? 0) });
+
+  res.json({ balance: Number(rows[0]?.balance ?? STARTING_BALANCE) });
 });
 
 /* ===============================
-   Positions
+   POSITIONS (AGGREGATED)
 ================================ */
 app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
@@ -238,7 +229,8 @@ app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
     FROM portfolios
     WHERE user_id = $1
     GROUP BY market_id, outcome
-    HAVING SUM(shares) <> 0;
+    HAVING SUM(shares) <> 0
+    ORDER BY market_id, outcome;
     `,
     [req.userId]
   );
