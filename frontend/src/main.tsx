@@ -26,7 +26,9 @@ function Login() {
   const navigate = useNavigate();
 
   React.useEffect(() => {
-    if (ready && authenticated) navigate("/portfolio", { replace: true });
+    if (ready && authenticated) {
+      navigate("/portfolio", { replace: true });
+    }
   }, [ready, authenticated, navigate]);
 
   if (!ready) return <p style={{ padding: 20 }}>Loading…</p>;
@@ -46,6 +48,8 @@ function Portfolio() {
   const { getAccessToken, logout } = usePrivy();
 
   const [balance, setBalance] = React.useState(0);
+  const [realizedPnl, setRealizedPnl] = React.useState(0);
+  const [unrealizedPnl, setUnrealizedPnl] = React.useState(0);
   const [positions, setPositions] = React.useState<any[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<string | null>(null);
@@ -56,24 +60,24 @@ function Portfolio() {
   const [price, setPrice] = React.useState(1);
 
   /* ===============================
-     TOKEN HELPERS
+     TOKENS
   ================================ */
-  async function getPrivyToken(): Promise<string> {
+  async function getBackendToken(): Promise<string> {
+    const cached = localStorage.getItem("backend_token");
+    if (cached) return cached;
+
+    let privyToken: string | null = null;
     for (let i = 0; i < 10; i++) {
       const t = await getAccessToken();
-      if (typeof t === "string") return t;
+      if (typeof t === "string") {
+        privyToken = t;
+        break;
+      }
       await new Promise((r) => setTimeout(r, 300));
     }
-    throw new Error("Privy token unavailable");
-  }
 
-  async function getBackendToken(force = false): Promise<string> {
-    if (!force) {
-      const cached = localStorage.getItem("backend_token");
-      if (cached) return cached;
-    }
+    if (!privyToken) throw new Error("Privy token unavailable");
 
-    const privyToken = await getPrivyToken();
     const res = await fetch(
       "https://predix-backend.onrender.com/auth/privy",
       {
@@ -92,57 +96,35 @@ function Portfolio() {
   }
 
   /* ===============================
-     SAFE AUTH FETCH (1 RETRY)
-  ================================ */
-  async function authedFetch(
-    url: string,
-    options: RequestInit = {},
-    retried = false
-  ): Promise<Response> {
-    try {
-      const token = await getBackendToken();
-      const res = await fetch(url, {
-        ...options,
-        headers: {
-          ...(options.headers || {}),
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (res.status === 401 && !retried) {
-        localStorage.removeItem("backend_token");
-        return authedFetch(url, options, true);
-      }
-
-      return res;
-    } catch (e) {
-      if (!retried) {
-        localStorage.removeItem("backend_token");
-        return authedFetch(url, options, true);
-      }
-      throw e;
-    }
-  }
-
-  /* ===============================
      LOAD PORTFOLIO
   ================================ */
-  async function refreshAll() {
-    const res = await authedFetch(
-      "https://predix-backend.onrender.com/portfolio"
+  async function loadPortfolio() {
+    const token = await getBackendToken();
+
+    const res = await fetch(
+      "https://predix-backend.onrender.com/portfolio",
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
     );
 
     if (!res.ok) {
-      throw new Error("Failed to load portfolio");
+      if (res.status === 401) {
+        localStorage.removeItem("backend_token");
+      }
+      throw new Error("Failed to fetch portfolio");
     }
 
     const json = await res.json();
+
     setBalance(Number(json.balance));
+    setRealizedPnl(Number(json.realized_pnl ?? 0));
+    setUnrealizedPnl(Number(json.unrealized_pnl ?? 0));
     setPositions(json.positions || []);
   }
 
   React.useEffect(() => {
-    refreshAll().catch((e) => setError(e.message));
+    loadPortfolio().catch((e) => setError(e.message));
   }, []);
 
   /* ===============================
@@ -153,11 +135,14 @@ function Portfolio() {
       setError(null);
       setMessage(null);
 
-      const res = await authedFetch(
+      const token = await getBackendToken();
+
+      const res = await fetch(
         "https://predix-backend.onrender.com/trade",
         {
           method: "POST",
           headers: {
+            Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
             "Idempotency-Key": crypto.randomUUID(),
           },
@@ -180,7 +165,7 @@ function Portfolio() {
           : `Sold ${shares} @ ${price}`
       );
 
-      await refreshAll();
+      await loadPortfolio();
     } catch (e: any) {
       setError(e.message);
     }
@@ -189,6 +174,8 @@ function Portfolio() {
   return (
     <div style={{ padding: 20 }}>
       <h2>Balance: {balance.toFixed(2)}</h2>
+      <div>Realized PnL: {realizedPnl.toFixed(2)}</div>
+      <div>Unrealized PnL: {unrealizedPnl.toFixed(2)}</div>
 
       <h3>Positions</h3>
       {positions.length === 0 && <p>No positions</p>}
@@ -216,13 +203,13 @@ function Portfolio() {
       <input
         type="number"
         value={shares}
-        onChange={(e) => setShares(+e.target.value)}
+        onChange={(e) => setShares(Number(e.target.value))}
       />
       <br />
       <input
         type="number"
         value={price}
-        onChange={(e) => setPrice(+e.target.value)}
+        onChange={(e) => setPrice(Number(e.target.value))}
       />
       <br />
 
@@ -269,6 +256,9 @@ function App() {
   );
 }
 
+/* ===============================
+   Mount
+================================ */
 ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement
 ).render(
