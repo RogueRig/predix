@@ -11,24 +11,17 @@ const PORT = process.env.PORT || 10000;
 const STARTING_BALANCE = 1000;
 
 /* ===============================
-   CORS — MUST BE FIRST
+   Middleware (FIXED CORS)
 ================================ */
 app.use(
   cors({
     origin: "*",
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
+    allowedHeaders: "*", // ✅ THIS IS THE FIX
   })
 );
 
-// 🔴 CRITICAL: short-circuit OPTIONS
-app.use((req, res, next) => {
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(204);
-  }
-  next();
-});
-
+app.options("*", cors());
 app.use(express.json());
 
 /* ===============================
@@ -63,7 +56,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Migration (SAFE)
+   Migration
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -176,7 +169,7 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   Trade (BUY / SELL)
+   Trade
 ================================ */
 app.post("/trade", requireBackendAuth, async (req, res) => {
   const { market_id, outcome, side, shares, price } = req.body;
@@ -292,7 +285,7 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   PORTFOLIO
+   Portfolio
 ================================ */
 app.get("/portfolio", requireBackendAuth, async (req, res) => {
   const posRes = await pool.query(
