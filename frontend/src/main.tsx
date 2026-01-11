@@ -55,7 +55,7 @@ type Position = {
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
-  const [balance, setBalance] = React.useState<number>(0);
+  const [balance, setBalance] = React.useState(0);
   const [positions, setPositions] = React.useState<Position[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -71,7 +71,7 @@ function PortfolioPage() {
   ================================ */
   async function getBackendToken(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
-    if (typeof cached === "string") return cached;
+    if (cached) return cached;
 
     let privyToken: string | null = null;
     for (let i = 0; i < 10; i++) {
@@ -103,10 +103,9 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     Load Balance
+     Refresh Balance
   ================================ */
-  async function refreshBalance() {
-    const token = await getBackendToken();
+  async function refreshBalance(token: string) {
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio/meta",
       {
@@ -118,10 +117,9 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     Load Positions (FIXED)
+     Refresh Positions (HARDENED)
   ================================ */
-  async function refreshPositions() {
-    const token = await getBackendToken();
+  async function refreshPositions(token: string) {
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio/positions",
       {
@@ -131,14 +129,14 @@ function PortfolioPage() {
 
     const json = await res.json();
 
-    const parsed: Position[] = (json.positions || []).map((p: any) => ({
-      market_id: p.market_id,
-      outcome: p.outcome,
-      total_shares: Number(p.total_shares),
-      avg_price: Number(p.avg_price),
+    const safe: Position[] = (json.positions || []).map((p: any) => ({
+      market_id: String(p.market_id),
+      outcome: String(p.outcome),
+      total_shares: Number(p.total_shares) || 0,
+      avg_price: Number(p.avg_price) || 0,
     }));
 
-    setPositions(parsed);
+    setPositions(safe);
   }
 
   /* ===============================
@@ -173,8 +171,10 @@ function PortfolioPage() {
       if (!res.ok) throw new Error(json.error || "Trade failed");
 
       setMessage(`Bought ${shares} @ ${price}`);
-      await refreshBalance();
-      await refreshPositions();
+
+      // 🔒 SERIAL refresh — no race conditions
+      await refreshBalance(token);
+      await refreshPositions(token);
     } catch (e: any) {
       setError(e.message);
     }
@@ -182,9 +182,13 @@ function PortfolioPage() {
 
   React.useEffect(() => {
     if (!ready || !authenticated) return;
-    Promise.all([refreshBalance(), refreshPositions()]).finally(() =>
-      setLoading(false)
-    );
+
+    (async () => {
+      const token = await getBackendToken();
+      await refreshBalance(token);
+      await refreshPositions(token);
+      setLoading(false);
+    })();
   }, [ready, authenticated]);
 
   if (loading) return <p style={{ padding: 20 }}>Loading…</p>;
@@ -224,6 +228,11 @@ function PortfolioPage() {
           </strong>
           <div>Shares: {p.total_shares}</div>
           <div>Avg Price: {p.avg_price.toFixed(4)}</div>
+
+          {/* SELL DISABLED UNTIL BACKEND SAFE */}
+          <button disabled style={{ opacity: 0.5 }}>
+            Sell (coming soon)
+          </button>
         </div>
       ))}
 
