@@ -307,6 +307,31 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
+   Trade History (READ ONLY)
+================================ */
+app.get("/trades", requireBackendAuth, async (req, res) => {
+  const { rows } = await pool.query(
+    `
+    SELECT
+      market_id,
+      outcome,
+      side,
+      shares,
+      price,
+      realized_pnl,
+      created_at
+    FROM trades
+    WHERE user_id = $1
+    ORDER BY created_at DESC
+    LIMIT 100
+    `,
+    [req.userId]
+  );
+
+  res.json({ trades: rows });
+});
+
+/* ===============================
    Health
 ================================ */
 app.get("/", (_, res) => res.json({ ok: true }));
