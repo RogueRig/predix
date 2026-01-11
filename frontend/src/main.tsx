@@ -56,7 +56,6 @@ function PortfolioPage() {
   const [shares, setShares] = React.useState(10);
   const [price, setPrice] = React.useState(1);
 
-  // 🔐 request version guard (KEY FIX)
   const requestVersion = React.useRef(0);
 
   /* ===============================
@@ -96,10 +95,10 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     SINGLE SOURCE REFRESH (FIX)
+     Unified Refresh (FIXED)
   ================================ */
   async function refreshAll() {
-    const currentVersion = ++requestVersion.current;
+    const version = ++requestVersion.current;
     const token = await getBackendToken();
 
     const [balRes, posRes] = await Promise.all([
@@ -111,23 +110,28 @@ function PortfolioPage() {
       }),
     ]);
 
-    if (requestVersion.current !== currentVersion) return;
+    if (requestVersion.current !== version) return;
 
     if (balRes.ok) {
       const b = await balRes.json();
-      if (typeof b.balance === "number") {
-        setBalance(b.balance);
-      }
+      const parsedBalance = Number(b.balance);
+      setBalance(Number.isFinite(parsedBalance) ? parsedBalance : 0);
     }
 
     if (posRes.ok) {
       const p = await posRes.json();
       setPositions(
-        (p.positions || []).map((x: any) => ({
-          ...x,
-          total_shares: Number(x.total_shares),
-          avg_price: Number(x.avg_price),
-        }))
+        (p.positions || []).map((x: any) => {
+          const shares = Number(x.total_shares);
+          const avg = Number(x.avg_price);
+
+          return {
+            market_id: x.market_id,
+            outcome: x.outcome,
+            total_shares: Number.isFinite(shares) ? shares : 0,
+            avg_price: Number.isFinite(avg) ? avg : 0,
+          };
+        })
       );
     }
   }
