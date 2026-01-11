@@ -18,19 +18,28 @@ app.use(express.json());
 /* ===============================
    ENV CHECK
 ================================ */
-if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL missing");
-if (!process.env.BACKEND_JWT_SECRET) throw new Error("BACKEND_JWT_SECRET missing");
-if (!process.env.PRIVY_APP_ID || !process.env.PRIVY_APP_SECRET)
-  throw new Error("Privy env missing");
+if (!process.env.DATABASE_URL) {
+  console.error("DATABASE_URL missing");
+  process.exit(1);
+}
+if (!process.env.BACKEND_JWT_SECRET) {
+  console.error("BACKEND_JWT_SECRET missing");
+  process.exit(1);
+}
+if (!process.env.PRIVY_APP_ID || !process.env.PRIVY_APP_SECRET) {
+  console.error("PRIVY_APP_ID or PRIVY_APP_SECRET missing");
+  process.exit(1);
+}
 
 /* ===============================
    Database
 ================================ */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production"
-    ? { rejectUnauthorized: false }
-    : false,
+  ssl:
+    process.env.NODE_ENV === "production"
+      ? { rejectUnauthorized: false }
+      : false,
 });
 
 /* ===============================
@@ -42,7 +51,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Migration (SAFE)
+   Database Migration
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -72,20 +81,24 @@ async function migrate() {
     );
   `);
 
-  console.log("✅ DB ready");
+  console.log("✅ Database migration complete");
 }
+
 await migrate();
 
 /* ===============================
-   AUTH (AUTO-BALANCE REPAIR ✅)
+   Auth
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer "))
-      return res.status(401).json({ error: "Missing Authorization" });
+    if (!auth?.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing Authorization header" });
+    }
 
-    const verified = await privy.verifyAuthToken(auth.replace("Bearer ", ""));
+    const verified = await privy.verifyAuthToken(
+      auth.replace("Bearer ", "")
+    );
 
     const { rows } = await pool.query(
       `
@@ -95,7 +108,7 @@ app.post("/auth/privy", async (req, res) => {
       DO UPDATE SET
         email = EXCLUDED.email,
         wallet_address = EXCLUDED.wallet_address
-      RETURNING id, balance;
+      RETURNING id;
       `,
       [
         verified.userId,
@@ -104,25 +117,15 @@ app.post("/auth/privy", async (req, res) => {
       ]
     );
 
-    const user = rows[0];
-
-    // ✅ AUTO-REPAIR BALANCE
-    if (!user.balance || Number(user.balance) <= 0) {
-      await pool.query(
-        `UPDATE users SET balance = 1000 WHERE id = $1`,
-        [user.id]
-      );
-    }
-
     const token = jwt.sign(
-      { uid: user.id },
+      { uid: rows[0].id },
       process.env.BACKEND_JWT_SECRET,
       { expiresIn: "7d" }
     );
 
     res.json({ token });
   } catch (err) {
-    console.error(err);
+    console.error("Backend auth failed:", err);
     res.status(401).json({ error: "Backend auth failed" });
   }
 });
@@ -133,8 +136,9 @@ app.post("/auth/privy", async (req, res) => {
 function requireBackendAuth(req, res, next) {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer "))
-      return res.status(401).json({ error: "Missing Authorization" });
+    if (!auth?.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing Authorization header" });
+    }
 
     req.userId = jwt.verify(
       auth.replace("Bearer ", ""),
@@ -143,26 +147,96 @@ function requireBackendAuth(req, res, next) {
 
     next();
   } catch {
-    res.status(401).json({ error: "Invalid token" });
+    res.status(401).json({ error: "Invalid backend token" });
   }
 }
 
 /* ===============================
-   Portfolio Meta
+   BUY TRADE (THIS WAS MISSING)
+================================ */
+app.post("/trade/buy", requireBackendAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const key = req.headers["idempotency-key"];
+    if (!key) {
+      return res.status(400).json({ error: "Missing Idempotency-Key" });
+    }
+
+    const { market_id, outcome, shares, price } = req.body;
+    if (!market_id || !outcome || !shares || !price) {
+      return res.status(400).json({ error: "Invalid payload" });
+    }
+
+    const cost = Number(shares) * Number(price);
+
+    await client.query("BEGIN");
+
+    const bal = await client.query(
+      `SELECT balance FROM users WHERE id = $1 FOR UPDATE`,
+      [req.userId]
+    );
+
+    if (Number(bal.rows[0].balance) < cost) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Insufficient balance" });
+    }
+
+    const dup = await client.query(
+      `SELECT 1 FROM portfolios WHERE user_id = $1 AND idempotency_key = $2`,
+      [req.userId, key]
+    );
+
+    if (dup.rows.length) {
+      await client.query("ROLLBACK");
+      return res.json({ status: "duplicate_ignored" });
+    }
+
+    await client.query(
+      `
+      INSERT INTO portfolios
+      (user_id, market_id, outcome, shares, avg_price, idempotency_key)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      `,
+      [req.userId, market_id, outcome, shares, price, key]
+    );
+
+    await client.query(
+      `UPDATE users SET balance = balance - $1 WHERE id = $2`,
+      [cost, req.userId]
+    );
+
+    await client.query("COMMIT");
+    res.json({ status: "filled", spent: cost });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ error: "Trade failed" });
+  } finally {
+    client.release();
+  }
+});
+
+/* ===============================
+   Portfolio
 ================================ */
 app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `SELECT balance FROM users WHERE id = $1`,
     [req.userId]
   );
-  res.json({ balance: Number(rows[0].balance) });
+  res.json({ balance: rows[0].balance });
 });
 
 /* ===============================
    Health
 ================================ */
-app.get("/", (_, res) => res.send("Predix backend running"));
+app.get("/", (_, res) => {
+  res.send("Predix backend running");
+});
 
+/* ===============================
+   Start
+================================ */
 app.listen(PORT, () => {
   console.log("🚀 Backend running on", PORT);
 });
