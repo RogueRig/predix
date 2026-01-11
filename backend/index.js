@@ -18,28 +18,19 @@ app.use(express.json());
 /* ===============================
    ENV CHECK
 ================================ */
-if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL missing");
-  process.exit(1);
-}
-if (!process.env.BACKEND_JWT_SECRET) {
-  console.error("BACKEND_JWT_SECRET missing");
-  process.exit(1);
-}
-if (!process.env.PRIVY_APP_ID || !process.env.PRIVY_APP_SECRET) {
-  console.error("PRIVY_APP_ID or PRIVY_APP_SECRET missing");
-  process.exit(1);
-}
+if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL missing");
+if (!process.env.BACKEND_JWT_SECRET) throw new Error("BACKEND_JWT_SECRET missing");
+if (!process.env.PRIVY_APP_ID || !process.env.PRIVY_APP_SECRET)
+  throw new Error("Privy env missing");
 
 /* ===============================
    Database
 ================================ */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl:
-    process.env.NODE_ENV === "production"
-      ? { rejectUnauthorized: false }
-      : false,
+  ssl: process.env.NODE_ENV === "production"
+    ? { rejectUnauthorized: false }
+    : false,
 });
 
 /* ===============================
@@ -51,7 +42,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Database Migration
+   Migration (SAFE)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -81,24 +72,20 @@ async function migrate() {
     );
   `);
 
-  console.log("✅ Database migration complete");
+  console.log("✅ DB ready");
 }
-
 await migrate();
 
 /* ===============================
-   Auth
+   AUTH (AUTO-BALANCE REPAIR ✅)
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Missing Authorization header" });
-    }
+    if (!auth?.startsWith("Bearer "))
+      return res.status(401).json({ error: "Missing Authorization" });
 
-    const verified = await privy.verifyAuthToken(
-      auth.replace("Bearer ", "")
-    );
+    const verified = await privy.verifyAuthToken(auth.replace("Bearer ", ""));
 
     const { rows } = await pool.query(
       `
@@ -108,7 +95,7 @@ app.post("/auth/privy", async (req, res) => {
       DO UPDATE SET
         email = EXCLUDED.email,
         wallet_address = EXCLUDED.wallet_address
-      RETURNING id;
+      RETURNING id, balance;
       `,
       [
         verified.userId,
@@ -117,15 +104,25 @@ app.post("/auth/privy", async (req, res) => {
       ]
     );
 
+    const user = rows[0];
+
+    // ✅ AUTO-REPAIR BALANCE
+    if (!user.balance || Number(user.balance) <= 0) {
+      await pool.query(
+        `UPDATE users SET balance = 1000 WHERE id = $1`,
+        [user.id]
+      );
+    }
+
     const token = jwt.sign(
-      { uid: rows[0].id },
+      { uid: user.id },
       process.env.BACKEND_JWT_SECRET,
       { expiresIn: "7d" }
     );
 
     res.json({ token });
   } catch (err) {
-    console.error("Backend auth failed:", err);
+    console.error(err);
     res.status(401).json({ error: "Backend auth failed" });
   }
 });
@@ -136,9 +133,8 @@ app.post("/auth/privy", async (req, res) => {
 function requireBackendAuth(req, res, next) {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Missing Authorization header" });
-    }
+    if (!auth?.startsWith("Bearer "))
+      return res.status(401).json({ error: "Missing Authorization" });
 
     req.userId = jwt.verify(
       auth.replace("Bearer ", ""),
@@ -147,45 +143,26 @@ function requireBackendAuth(req, res, next) {
 
     next();
   } catch {
-    res.status(401).json({ error: "Invalid backend token" });
+    res.status(401).json({ error: "Invalid token" });
   }
 }
 
 /* ===============================
-   🔍 DEBUG — WHO AM I (NEW)
-   GET /debug/whoami
+   Portfolio Meta
 ================================ */
-app.get("/debug/whoami", requireBackendAuth, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT id, balance, created_at FROM users WHERE id = $1`,
-      [req.userId]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    res.json({
-      ok: true,
-      user: rows[0],
-    });
-  } catch (err) {
-    console.error("whoami failed:", err);
-    res.status(500).json({ error: "whoami failed" });
-  }
+app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT balance FROM users WHERE id = $1`,
+    [req.userId]
+  );
+  res.json({ balance: Number(rows[0].balance) });
 });
 
 /* ===============================
    Health
 ================================ */
-app.get("/", (_, res) => {
-  res.send("Predix backend running");
-});
+app.get("/", (_, res) => res.send("Predix backend running"));
 
-/* ===============================
-   Start
-================================ */
 app.listen(PORT, () => {
   console.log("🚀 Backend running on", PORT);
 });
