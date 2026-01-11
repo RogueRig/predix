@@ -52,6 +52,7 @@ function Portfolio() {
   const [error, setError] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<string | null>(null);
 
+  // Trade form
   const [marketId, setMarketId] = React.useState("test-market");
   const [outcome, setOutcome] = React.useState("YES");
   const [shares, setShares] = React.useState(1);
@@ -60,25 +61,27 @@ function Portfolio() {
   /* ===============================
      TOKENS (STRICT)
   ================================ */
-  async function getBackendTokenStrict(): Promise<string> {
-    const cached = localStorage.getItem("backend_token");
-    if (cached) return cached;
-
-    let privyToken: string | null = null;
+  async function getPrivyTokenStrict(): Promise<string> {
     for (let i = 0; i < 10; i++) {
       const t = await getAccessToken();
-      if (typeof t === "string") {
-        privyToken = t;
-        break;
-      }
+      if (typeof t === "string") return t;
       await new Promise((r) => setTimeout(r, 300));
     }
+    throw new Error("Privy token unavailable");
+  }
 
-    if (!privyToken) throw new Error("Privy token unavailable");
+  async function getBackendTokenStrict(): Promise<string> {
+    const cached = localStorage.getItem("backend_token");
+    if (typeof cached === "string") return cached;
+
+    const privyToken = await getPrivyTokenStrict();
 
     const res = await fetch(
       "https://predix-backend.onrender.com/auth/privy",
-      { method: "POST", headers: { Authorization: `Bearer ${privyToken}` } }
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${privyToken}` },
+      }
     );
 
     const json = await res.json();
@@ -93,12 +96,14 @@ function Portfolio() {
   /* ===============================
      LOAD PORTFOLIO
   ================================ */
-  async function refreshPortfolio() {
+  async function refreshAll() {
     const token = await getBackendTokenStrict();
 
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio",
-      { headers: { Authorization: `Bearer ${token}` } }
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
     );
 
     const json = await res.json();
@@ -108,11 +113,11 @@ function Portfolio() {
   }
 
   React.useEffect(() => {
-    refreshPortfolio().catch((e) => setError(e.message));
+    refreshAll().catch((e) => setError(e.message));
   }, []);
 
   /* ===============================
-     TRADE
+     BUY / SELL
   ================================ */
   async function trade(side: "buy" | "sell") {
     try {
@@ -120,8 +125,6 @@ function Portfolio() {
       setMessage(null);
 
       const token = await getBackendTokenStrict();
-
-      const signedShares = side === "buy" ? shares : -shares;
 
       const res = await fetch(
         "https://predix-backend.onrender.com/trade",
@@ -135,7 +138,8 @@ function Portfolio() {
           body: JSON.stringify({
             market_id: marketId,
             outcome,
-            shares: signedShares,
+            side,
+            shares,
             price,
           }),
         }
@@ -150,9 +154,9 @@ function Portfolio() {
           : `Sold ${shares} @ ${price}`
       );
 
-      await refreshPortfolio();
+      await refreshAll();
     } catch (e: any) {
-      setError(e.message);
+      setError(e.message || "Failed to fetch");
     }
   }
 
@@ -163,15 +167,23 @@ function Portfolio() {
       <h3>Positions</h3>
       {positions.length === 0 && <p>No positions</p>}
       {positions.map((p, i) => (
-        <div key={i} style={{ border: "1px solid #333", padding: 12 }}>
+        <div
+          key={i}
+          style={{
+            border: "1px solid #333",
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 12,
+          }}
+        >
           <strong>
             {p.market_id} — {p.outcome}
           </strong>
           <div>Shares: {p.shares}</div>
-          <div>Avg Price: {p.avg_price.toFixed(4)}</div>
-          <div>Current Price: {p.current_price.toFixed(4)}</div>
-          <div>Position Value: {p.position_value.toFixed(2)}</div>
-          <div>Unrealized PnL: {p.unrealized_pnl.toFixed(2)}</div>
+          <div>Avg Price: {Number(p.avg_price).toFixed(4)}</div>
+          <div>Current Price: {Number(p.current_price).toFixed(4)}</div>
+          <div>Position Value: {Number(p.position_value).toFixed(2)}</div>
+          <div>Unrealized PnL: {Number(p.unrealized_pnl).toFixed(2)}</div>
         </div>
       ))}
 
