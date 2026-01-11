@@ -152,41 +152,63 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   BUY TRADE (THIS WAS MISSING)
+   BUY TRADE (FIXED & HARDENED)
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
+
   try {
-    const key = req.headers["idempotency-key"];
-    if (!key) {
-      return res.status(400).json({ error: "Missing Idempotency-Key" });
+    const idempotencyKey =
+      req.headers["idempotency-key"] ||
+      req.headers["idempotency_key"] ||
+      req.headers["Idempotency-Key"];
+
+    if (typeof idempotencyKey !== "string") {
+      return res.status(400).json({
+        error: "Missing Idempotency-Key header",
+      });
     }
 
     const { market_id, outcome, shares, price } = req.body;
+
     if (!market_id || !outcome || !shares || !price) {
-      return res.status(400).json({ error: "Invalid payload" });
+      return res.status(400).json({
+        error: "Invalid payload",
+        received: req.body,
+      });
     }
 
     const cost = Number(shares) * Number(price);
 
     await client.query("BEGIN");
 
-    const bal = await client.query(
+    const balRes = await client.query(
       `SELECT balance FROM users WHERE id = $1 FOR UPDATE`,
       [req.userId]
     );
 
-    if (Number(bal.rows[0].balance) < cost) {
+    if (balRes.rows.length === 0) {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "Insufficient balance" });
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const balance = Number(balRes.rows[0].balance);
+
+    if (balance < cost) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error: "Insufficient balance",
+        balance,
+        cost,
+      });
     }
 
     const dup = await client.query(
       `SELECT 1 FROM portfolios WHERE user_id = $1 AND idempotency_key = $2`,
-      [req.userId, key]
+      [req.userId, idempotencyKey]
     );
 
-    if (dup.rows.length) {
+    if (dup.rows.length > 0) {
       await client.query("ROLLBACK");
       return res.json({ status: "duplicate_ignored" });
     }
@@ -197,7 +219,14 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
       (user_id, market_id, outcome, shares, avg_price, idempotency_key)
       VALUES ($1, $2, $3, $4, $5, $6)
       `,
-      [req.userId, market_id, outcome, shares, price, key]
+      [
+        req.userId,
+        market_id,
+        outcome,
+        Number(shares),
+        Number(price),
+        idempotencyKey,
+      ]
     );
 
     await client.query(
@@ -206,18 +235,27 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
     );
 
     await client.query("COMMIT");
-    res.json({ status: "filled", spent: cost });
+
+    res.json({
+      status: "filled",
+      spent: cost,
+      remaining_balance: balance - cost,
+    });
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error(err);
-    res.status(500).json({ error: "Trade failed" });
+    console.error("BUY ERROR:", err);
+
+    res.status(500).json({
+      error: "Trade failed",
+      message: err instanceof Error ? err.message : String(err),
+    });
   } finally {
     client.release();
   }
 });
 
 /* ===============================
-   Portfolio
+   Portfolio Meta
 ================================ */
 app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
