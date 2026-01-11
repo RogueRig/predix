@@ -47,7 +47,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Migration
+   MIGRATION (SAFE)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -71,8 +71,8 @@ async function migrate() {
       outcome TEXT NOT NULL,
       shares NUMERIC NOT NULL,
       avg_price NUMERIC NOT NULL,
-      idempotency_key TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      idempotency_key TEXT
     );
   `);
 
@@ -82,7 +82,7 @@ async function migrate() {
 await migrate();
 
 /* ===============================
-   Auth
+   Auth (FIXES BALANCE = 0)
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
@@ -101,7 +101,7 @@ app.post("/auth/privy", async (req, res) => {
       VALUES ($1,$2,$3)
       ON CONFLICT (privy_user_id)
       DO UPDATE SET email = EXCLUDED.email
-      RETURNING id;
+      RETURNING id, balance;
       `,
       [
         verified.userId,
@@ -109,6 +109,14 @@ app.post("/auth/privy", async (req, res) => {
         verified.wallet?.address ?? null,
       ]
     );
+
+    // 🔥 DEV FIX: restore balance if accidentally zero
+    if (Number(rows[0].balance) === 0) {
+      await pool.query(
+        `UPDATE users SET balance = 1000 WHERE id = $1`,
+        [rows[0].id]
+      );
+    }
 
     const token = jwt.sign(
       { uid: rows[0].id },
@@ -124,7 +132,7 @@ app.post("/auth/privy", async (req, res) => {
 });
 
 /* ===============================
-   JWT Guard (FIXED – JS ONLY)
+   JWT Guard
 ================================ */
 function requireBackendAuth(req, res, next) {
   try {
@@ -145,38 +153,7 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   DEV RESET
-================================ */
-app.post("/dev/reset", requireBackendAuth, async (req, res) => {
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    await client.query(
-      `DELETE FROM portfolios WHERE user_id = $1`,
-      [req.userId]
-    );
-
-    await client.query(
-      `UPDATE users SET balance = 1000 WHERE id = $1`,
-      [req.userId]
-    );
-
-    await client.query("COMMIT");
-
-    res.json({ ok: true, balance: 1000 });
-  } catch (e) {
-    await client.query("ROLLBACK");
-    console.error(e);
-    res.status(500).json({ error: "Reset failed" });
-  } finally {
-    client.release();
-  }
-});
-
-/* ===============================
-   BUY
+   BUY TRADE
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
@@ -202,7 +179,6 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
     );
 
     const balance = Number(balRes.rows[0].balance);
-
     if (balance < cost) {
       await client.query("ROLLBACK");
       return res.status(400).json({ error: "Insufficient balance" });
@@ -242,7 +218,6 @@ app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
     `SELECT balance FROM users WHERE id = $1`,
     [req.userId]
   );
-
   res.json({ balance: Number(rows[0]?.balance ?? 0) });
 });
 
@@ -255,7 +230,7 @@ app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
     SELECT
       market_id,
       outcome,
-      SUM(shares)::float AS total_shares,
+      SUM(shares) AS total_shares,
       ROUND(
         SUM(shares * avg_price) / NULLIF(SUM(shares), 0),
         4
@@ -263,8 +238,7 @@ app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
     FROM portfolios
     WHERE user_id = $1
     GROUP BY market_id, outcome
-    HAVING SUM(shares) <> 0
-    ORDER BY market_id, outcome;
+    HAVING SUM(shares) <> 0;
     `,
     [req.userId]
   );
@@ -280,5 +254,5 @@ app.get("/", (_, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log("🚀 Backend running on", PORT);
+  console.log("🚀 Backend running");
 });
