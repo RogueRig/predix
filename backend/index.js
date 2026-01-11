@@ -47,7 +47,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   SAFE MIGRATION
+   SAFE MIGRATION (POSTGRES-COMPAT)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -76,10 +76,26 @@ async function migrate() {
     );
   `);
 
+  // ✅ ADD COLUMN SAFELY
   await pool.query(`
     ALTER TABLE portfolios
-    ADD CONSTRAINT IF NOT EXISTS portfolios_user_id_idempotency_key_key
-    UNIQUE (user_id, idempotency_key);
+    ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+  `);
+
+  // ✅ ADD UNIQUE CONSTRAINT SAFELY (POSTGRES WAY)
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'portfolios_user_id_idempotency_key_key'
+      ) THEN
+        ALTER TABLE portfolios
+        ADD CONSTRAINT portfolios_user_id_idempotency_key_key
+        UNIQUE (user_id, idempotency_key);
+      END IF;
+    END $$;
   `);
 
   console.log("✅ Database migration complete");
@@ -136,10 +152,12 @@ function requireBackendAuth(req, res, next) {
     if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
+
     req.userId = jwt.verify(
       auth.replace("Bearer ", ""),
       process.env.BACKEND_JWT_SECRET
     ).uid;
+
     next();
   } catch {
     res.status(401).json({ error: "Invalid backend token" });
@@ -147,10 +165,11 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   BUY (UNCHANGED)
+   BUY
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
+
   try {
     const key = req.headers["idempotency-key"];
     if (typeof key !== "string") {
@@ -197,7 +216,7 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   SELL (FIXED ✅)
+   SELL (FIXED – NO AGGREGATE LOCK)
 ================================ */
 app.post("/trade/sell", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
@@ -213,7 +232,6 @@ app.post("/trade/sell", requireBackendAuth, async (req, res) => {
 
     await client.query("BEGIN");
 
-    // 🔒 LOCK RELEVANT ROWS (NO AGGREGATE)
     const rows = await client.query(
       `
       SELECT shares
@@ -233,7 +251,7 @@ app.post("/trade/sell", requireBackendAuth, async (req, res) => {
 
     if (totalShares < Number(shares)) {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "Not enough shares to sell" });
+      return res.status(400).json({ error: "Not enough shares" });
     }
 
     await client.query(
@@ -261,7 +279,7 @@ app.post("/trade/sell", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   POSITIONS (AGGREGATED)
+   POSITIONS
 ================================ */
 app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
@@ -275,7 +293,7 @@ app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
     WHERE user_id = $1
     GROUP BY market_id, outcome
     HAVING SUM(shares) <> 0
-    ORDER BY market_id;
+    ORDER BY market_id, outcome;
     `,
     [req.userId]
   );
@@ -299,4 +317,6 @@ app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
 ================================ */
 app.get("/", (_, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => console.log("🚀 Backend running"));
+app.listen(PORT, () => {
+  console.log("🚀 Backend running");
+});
