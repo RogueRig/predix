@@ -87,7 +87,7 @@ await migrate();
 app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith("Bearer ")) {
+    if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -129,7 +129,7 @@ app.post("/auth/privy", async (req, res) => {
 function requireBackendAuth(req, res, next) {
   try {
     const auth = req.headers.authorization;
-    if (!auth || !auth.startsWith("Bearer ")) {
+    if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -208,6 +208,18 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
+   DEV ONLY: RESET BALANCE
+================================ */
+app.post("/dev/reset-balance", requireBackendAuth, async (req, res) => {
+  await pool.query(
+    `UPDATE users SET balance = 1000 WHERE id = $1`,
+    [req.userId]
+  );
+
+  res.json({ ok: true, balance: 1000 });
+});
+
+/* ===============================
    Balance
 ================================ */
 app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
@@ -219,7 +231,7 @@ app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Positions (FIXED, NULL-SAFE)
+   Positions
 ================================ */
 app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
@@ -227,18 +239,15 @@ app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
     SELECT
       market_id,
       outcome,
-      COALESCE(SUM(shares), 0) AS total_shares,
-      COALESCE(
-        ROUND(
-          SUM(shares * avg_price) / NULLIF(SUM(shares), 0),
-          4
-        ),
-        0
+      SUM(shares) AS total_shares,
+      ROUND(
+        SUM(shares * avg_price) / NULLIF(SUM(shares), 0),
+        4
       ) AS avg_price
     FROM portfolios
     WHERE user_id = $1
     GROUP BY market_id, outcome
-    HAVING COALESCE(SUM(shares), 0) <> 0
+    HAVING SUM(shares) <> 0
     ORDER BY market_id, outcome;
     `,
     [req.userId]
