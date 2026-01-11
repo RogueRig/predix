@@ -52,7 +52,6 @@ const privy = new PrivyClient(
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 
-  // Users table
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -64,7 +63,6 @@ async function migrate() {
     );
   `);
 
-  // Portfolios base table
   await pool.query(`
     CREATE TABLE IF NOT EXISTS portfolios (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -77,13 +75,11 @@ async function migrate() {
     );
   `);
 
-  // 🔧 ADD MISSING COLUMN (THIS FIXES YOUR ERROR)
   await pool.query(`
     ALTER TABLE portfolios
     ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
   `);
 
-  // 🔧 ADD UNIQUE CONSTRAINT SAFELY
   await pool.query(`
     DO $$
     BEGIN
@@ -165,7 +161,7 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   BUY TRADE (NOW WILL WORK)
+   BUY TRADE
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
@@ -190,20 +186,11 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
       [req.userId]
     );
 
-    if (balRes.rows.length === 0) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ error: "User not found" });
-    }
-
     const balance = Number(balRes.rows[0].balance);
 
     if (balance < cost) {
       await client.query("ROLLBACK");
-      return res.status(400).json({
-        error: "Insufficient balance",
-        balance,
-        cost,
-      });
+      return res.status(400).json({ error: "Insufficient balance" });
     }
 
     await client.query(
@@ -237,7 +224,7 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Balance
+   Portfolio Balance
 ================================ */
 app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
@@ -245,6 +232,32 @@ app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
     [req.userId]
   );
   res.json({ balance: Number(rows[0]?.balance ?? 0) });
+});
+
+/* ===============================
+   🔥 NEW: POSITIONS (AGGREGATED)
+================================ */
+app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
+  const { rows } = await pool.query(
+    `
+    SELECT
+      market_id,
+      outcome,
+      SUM(shares) AS total_shares,
+      ROUND(
+        SUM(shares * avg_price) / NULLIF(SUM(shares), 0),
+        4
+      ) AS avg_price
+    FROM portfolios
+    WHERE user_id = $1
+    GROUP BY market_id, outcome
+    HAVING SUM(shares) <> 0
+    ORDER BY market_id, outcome;
+    `,
+    [req.userId]
+  );
+
+  res.json({ positions: rows });
 });
 
 /* ===============================
