@@ -9,28 +9,60 @@ const { Pool } = pkg;
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+/* ===============================
+   Middleware
+================================ */
 app.use(cors());
 app.use(express.json());
 
-if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL missing");
-if (!process.env.BACKEND_JWT_SECRET) throw new Error("BACKEND_JWT_SECRET missing");
-if (!process.env.PRIVY_APP_ID || !process.env.PRIVY_APP_SECRET)
-  throw new Error("PRIVY_APP env missing");
+/* ===============================
+   ENV CHECK
+================================ */
+function requireEnv(name) {
+  if (!process.env[name]) {
+    console.error(`${name} missing`);
+    process.exit(1);
+  }
+}
 
+requireEnv("DATABASE_URL");
+requireEnv("BACKEND_JWT_SECRET");
+requireEnv("PRIVY_APP_ID");
+requireEnv("PRIVY_APP_SECRET");
+
+/* ===============================
+   Database (HARDENED FOR RENDER)
+================================ */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production"
-    ? { rejectUnauthorized: false }
-    : false,
+  ssl: { rejectUnauthorized: false },
+  max: 3,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 });
 
+/* ---- Verify DB on boot ---- */
+async function verifyDb() {
+  try {
+    const r = await pool.query("SELECT 1");
+    console.log("✅ Database connected");
+  } catch (err) {
+    console.error("❌ Database connection failed");
+    console.error(err);
+    process.exit(1);
+  }
+}
+
+/* ===============================
+   Privy
+================================ */
 const privy = new PrivyClient(
   process.env.PRIVY_APP_ID,
   process.env.PRIVY_APP_SECRET
 );
 
 /* ===============================
-   MIGRATION
+   Database Migration (SAFE, DEV-ONLY)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -60,12 +92,11 @@ async function migrate() {
     );
   `);
 
-  console.log("✅ Migration done");
+  console.log("✅ Database migration complete");
 }
-await migrate();
 
 /* ===============================
-   AUTH
+   Auth
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
@@ -74,18 +105,25 @@ app.post("/auth/privy", async (req, res) => {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
-    const verified = await privy.verifyAuthToken(auth.replace("Bearer ", ""));
+    const verified = await privy.verifyAuthToken(
+      auth.replace("Bearer ", "")
+    );
 
     const { rows } = await pool.query(
       `
       INSERT INTO users (privy_user_id, email, wallet_address)
       VALUES ($1, $2, $3)
       ON CONFLICT (privy_user_id)
-      DO UPDATE SET email = EXCLUDED.email,
-                    wallet_address = EXCLUDED.wallet_address
+      DO UPDATE SET
+        email = EXCLUDED.email,
+        wallet_address = EXCLUDED.wallet_address
       RETURNING id;
       `,
-      [verified.userId, verified.email ?? null, verified.wallet?.address ?? null]
+      [
+        verified.userId,
+        verified.email ?? null,
+        verified.wallet?.address ?? null,
+      ]
     );
 
     const token = jwt.sign(
@@ -95,54 +133,48 @@ app.post("/auth/privy", async (req, res) => {
     );
 
     res.json({ token });
-  } catch (e) {
-    console.error(e);
+  } catch (err) {
+    console.error("Auth failed:", err);
     res.status(401).json({ error: "Backend auth failed" });
   }
 });
 
 /* ===============================
-   JWT GUARD (DEBUGGED)
+   JWT Guard (NO HTML EVER)
 ================================ */
 function requireBackendAuth(req, res, next) {
-  const auth = req.headers.authorization;
-
-  if (!auth) {
-    return res.status(401).json({
-      error: "Missing auth",
-      received_headers: Object.keys(req.headers),
-    });
-  }
-
-  if (!auth.startsWith("Bearer ")) {
-    return res.status(401).json({
-      error: "Malformed auth header",
-      auth_value: auth,
-    });
-  }
-
   try {
+    const auth = req.headers.authorization;
+    if (!auth?.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing Authorization header" });
+    }
+
     const decoded = jwt.verify(
       auth.replace("Bearer ", ""),
       process.env.BACKEND_JWT_SECRET
     );
+
     req.userId = decoded.uid;
     next();
-  } catch (e) {
-    return res.status(401).json({ error: "Invalid token" });
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid backend token" });
   }
 }
 
 /* ===============================
-   BUY
+   BUY TRADE (DEV-SAFE)
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
+
   try {
     const key = req.headers["idempotency-key"];
-    if (!key) return res.status(400).json({ error: "Missing Idempotency-Key" });
+    if (typeof key !== "string") {
+      return res.status(400).json({ error: "Missing Idempotency-Key" });
+    }
 
     const { market_id, outcome, shares, price } = req.body;
+
     if (!market_id || !outcome || !shares || !price) {
       return res.status(400).json({ error: "Invalid payload", body: req.body });
     }
@@ -151,14 +183,35 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 
     await client.query("BEGIN");
 
-    const bal = await client.query(
+    const balRes = await client.query(
       `SELECT balance FROM users WHERE id = $1 FOR UPDATE`,
       [req.userId]
     );
 
-    if (Number(bal.rows[0].balance) < cost) {
+    if (!balRes.rows.length) {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: "Insufficient balance" });
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const balance = Number(balRes.rows[0].balance);
+
+    if (balance < cost) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error: "Insufficient balance",
+        balance,
+        cost,
+      });
+    }
+
+    const dup = await client.query(
+      `SELECT 1 FROM portfolios WHERE user_id = $1 AND idempotency_key = $2`,
+      [req.userId, key]
+    );
+
+    if (dup.rows.length) {
+      await client.query("ROLLBACK");
+      return res.json({ status: "duplicate_ignored" });
     }
 
     await client.query(
@@ -176,29 +229,58 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
     );
 
     await client.query("COMMIT");
-    res.json({ status: "filled", spent: cost });
-  } catch (e) {
+
+    res.json({
+      status: "filled",
+      spent: cost,
+      remaining_balance: balance - cost,
+    });
+  } catch (err) {
     await client.query("ROLLBACK");
-    console.error(e);
-    res.status(500).json({ error: "Trade failed" });
+    console.error("BUY ERROR:", err);
+    res.status(500).json({
+      error: "Trade failed",
+      message: err instanceof Error ? err.message : String(err),
+    });
   } finally {
     client.release();
   }
 });
 
 /* ===============================
-   META
+   Portfolio Meta
 ================================ */
 app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
-  const { rows } = await pool.query(
-    `SELECT balance FROM users WHERE id = $1`,
-    [req.userId]
-  );
-  res.json({ balance: rows[0].balance });
+  try {
+    const { rows } = await pool.query(
+      `SELECT balance FROM users WHERE id = $1`,
+      [req.userId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({ balance: Number(rows[0].balance) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to load balance" });
+  }
 });
 
-app.get("/", (_, res) => res.send("Predix backend running"));
+/* ===============================
+   Health
+================================ */
+app.get("/", (_, res) => {
+  res.json({ status: "ok" });
+});
+
+/* ===============================
+   Boot
+================================ */
+await verifyDb();
+await migrate();
 
 app.listen(PORT, () => {
-  console.log("🚀 Backend running on", PORT);
+  console.log(`🚀 Backend running on ${PORT}`);
 });
