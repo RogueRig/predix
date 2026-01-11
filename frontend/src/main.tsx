@@ -49,12 +49,14 @@ function PortfolioPage() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
-  // Trade form
   const [marketId, setMarketId] = React.useState("test-market");
   const [outcome, setOutcome] = React.useState("YES");
   const [shares, setShares] = React.useState(10);
   const [price, setPrice] = React.useState(1);
 
+  /* ===============================
+     Backend Token (SAFE)
+  ================================ */
   async function getBackendToken(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
     if (typeof cached === "string") return cached;
@@ -88,6 +90,9 @@ function PortfolioPage() {
     return json.token;
   }
 
+  /* ===============================
+     Balance
+  ================================ */
   async function refreshBalance() {
     const token = await getBackendToken();
     const res = await fetch(
@@ -100,6 +105,9 @@ function PortfolioPage() {
     setBalance(Number(json.balance) || 0);
   }
 
+  /* ===============================
+     BUY (ROBUST)
+  ================================ */
   async function buy() {
     try {
       setError(null);
@@ -112,7 +120,10 @@ function PortfolioPage() {
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
-            "Idempotency-Key": crypto.randomUUID(),
+            "Idempotency-Key":
+              typeof crypto !== "undefined" && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `mobile-${Date.now()}`,
           },
           body: JSON.stringify({
             market_id: marketId,
@@ -123,8 +134,20 @@ function PortfolioPage() {
         }
       );
 
+      const contentType = res.headers.get("content-type") || "";
+
+      if (!contentType.includes("application/json")) {
+        const text = await res.text();
+        throw new Error(
+          `Backend error (${res.status}): ${text.slice(0, 120)}`
+        );
+      }
+
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Trade failed");
+
+      if (!res.ok) {
+        throw new Error(json.error || "Trade failed");
+      }
 
       await refreshBalance();
     } catch (e: any) {
@@ -158,10 +181,7 @@ function PortfolioPage() {
       <div style={{ border: "1px solid #333", padding: 16, borderRadius: 10 }}>
         <h3>Trade (Paper)</h3>
 
-        <input
-          value={marketId}
-          onChange={(e) => setMarketId(e.target.value)}
-        />
+        <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
         <br />
 
         <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
