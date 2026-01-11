@@ -224,6 +224,76 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
+   🔥 SELL TRADE (NEW)
+================================ */
+app.post("/trade/sell", requireBackendAuth, async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const key = req.headers["idempotency-key"];
+    if (typeof key !== "string") {
+      return res.status(400).json({ error: "Missing Idempotency-Key" });
+    }
+
+    const { market_id, outcome, shares, price } = req.body;
+    if (!market_id || !outcome || !shares || !price) {
+      return res.status(400).json({ error: "Invalid payload" });
+    }
+
+    const proceeds = Number(shares) * Number(price);
+
+    await client.query("BEGIN");
+
+    const posRes = await client.query(
+      `
+      SELECT COALESCE(SUM(shares), 0) AS total_shares
+      FROM portfolios
+      WHERE user_id = $1 AND market_id = $2 AND outcome = $3
+      FOR UPDATE
+      `,
+      [req.userId, market_id, outcome]
+    );
+
+    const totalShares = Number(posRes.rows[0].total_shares);
+
+    if (totalShares < Number(shares)) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error: "Not enough shares to sell",
+        owned: totalShares,
+      });
+    }
+
+    await client.query(
+      `
+      INSERT INTO portfolios
+      (user_id, market_id, outcome, shares, avg_price, idempotency_key)
+      VALUES ($1,$2,$3,$4,$5,$6)
+      `,
+      [req.userId, market_id, outcome, -shares, price, key]
+    );
+
+    await client.query(
+      `UPDATE users SET balance = balance + $1 WHERE id = $2`,
+      [proceeds, req.userId]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      status: "sold",
+      received: proceeds,
+    });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+/* ===============================
    Portfolio Balance
 ================================ */
 app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
@@ -235,7 +305,7 @@ app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   🔥 NEW: POSITIONS (AGGREGATED)
+   Positions (Aggregated)
 ================================ */
 app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
