@@ -46,7 +46,6 @@ function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
   const [balance, setBalance] = React.useState<number>(0);
-  const [positions, setPositions] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<string | null>(null);
@@ -106,7 +105,8 @@ function PortfolioPage() {
   /* ===============================
      Balance
   ================================ */
-  async function refreshBalance(token: string) {
+  async function refreshBalance() {
+    const token = await getBackendToken();
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio/meta",
       {
@@ -127,30 +127,7 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     Positions
-  ================================ */
-  async function refreshPositions(token: string) {
-    const res = await fetch(
-      "https://predix-backend.onrender.com/portfolio/positions",
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
-
-    const json: unknown = await res.json();
-    if (
-      typeof json === "object" &&
-      json !== null &&
-      Array.isArray((json as { positions?: unknown }).positions)
-    ) {
-      setPositions((json as { positions: any[] }).positions);
-    } else {
-      setPositions([]);
-    }
-  }
-
-  /* ===============================
-     BUY TRADE
+     BUY
   ================================ */
   async function buy() {
     try {
@@ -182,36 +159,62 @@ function PortfolioPage() {
         }
       );
 
-      const contentType = res.headers.get("content-type") || "";
-      if (!contentType.includes("application/json")) {
-        const text = await res.text();
-        throw new Error(`Backend error (${res.status}): ${text}`);
-      }
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Buy failed");
 
-      const json: any = await res.json();
-      if (!res.ok) throw new Error(json.error || "Trade failed");
-
-      setMessage(`Trade filled. Spent ${json.spent}`);
-
-      await refreshBalance(token);
-      await refreshPositions(token);
+      setMessage(`Buy filled. Spent ${json.spent}`);
+      await refreshBalance();
     } catch (e: any) {
       setError(e.message);
     }
   }
 
   /* ===============================
-     Initial Load
+     SELL (NEW)
   ================================ */
+  async function sell() {
+    try {
+      setError(null);
+      setMessage(null);
+
+      const token = await getBackendToken();
+
+      const idempotencyKey =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `mobile-${Date.now()}`;
+
+      const res = await fetch(
+        "https://predix-backend.onrender.com/trade/sell",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": idempotencyKey,
+          },
+          body: JSON.stringify({
+            market_id: marketId,
+            outcome,
+            shares,
+            price,
+          }),
+        }
+      );
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Sell failed");
+
+      setMessage(`Sell filled. Received ${json.received}`);
+      await refreshBalance();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
   React.useEffect(() => {
     if (!ready || !authenticated) return;
-
-    (async () => {
-      const token = await getBackendToken();
-      await refreshBalance(token);
-      await refreshPositions(token);
-      setLoading(false);
-    })();
+    refreshBalance().finally(() => setLoading(false));
   }, [ready, authenticated]);
 
   if (loading) return <p style={{ padding: 20 }}>Loading…</p>;
@@ -232,39 +235,8 @@ function PortfolioPage() {
         <strong>Balance:</strong> {balance.toFixed(2)}
       </div>
 
-      {/* ===== Positions ===== */}
-      <div style={{ marginBottom: 20 }}>
-        <h3>Positions</h3>
-
-        {positions.length === 0 && <p>No positions yet</p>}
-
-        {positions.map((p, i) => (
-          <div
-            key={i}
-            style={{
-              border: "1px solid #333",
-              padding: 12,
-              borderRadius: 8,
-              marginBottom: 8,
-            }}
-          >
-            <div><strong>Market:</strong> {p.market_id}</div>
-            <div><strong>Outcome:</strong> {p.outcome}</div>
-            <div><strong>Shares:</strong> {p.total_shares}</div>
-            <div><strong>Avg Price:</strong> {p.avg_price}</div>
-          </div>
-        ))}
-      </div>
-
       {/* ===== Trade UI ===== */}
-      <div
-        style={{
-          border: "1px solid #333",
-          padding: 16,
-          borderRadius: 10,
-          marginBottom: 20,
-        }}
-      >
+      <div style={{ border: "1px solid #333", padding: 16, borderRadius: 10 }}>
         <h3>Trade (Paper)</h3>
 
         <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
@@ -290,12 +262,14 @@ function PortfolioPage() {
         />
         <br />
 
-        <button onClick={buy}>Buy</button>
+        <button onClick={buy}>Buy</button>{" "}
+        <button onClick={sell}>Sell</button>
 
         {message && <p style={{ color: "green" }}>{message}</p>}
         {error && <p style={{ color: "red" }}>{error}</p>}
       </div>
 
+      <br />
       <button
         onClick={() => {
           localStorage.removeItem("backend_token");
