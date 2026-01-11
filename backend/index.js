@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 10000;
 const STARTING_BALANCE = 1000;
 
 /* ===============================
-   Middleware
+   CORS — MUST BE FIRST
 ================================ */
 app.use(
   cors({
@@ -21,7 +21,14 @@ app.use(
   })
 );
 
-app.options("*", cors());
+// 🔴 CRITICAL: short-circuit OPTIONS
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
 app.use(express.json());
 
 /* ===============================
@@ -56,7 +63,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   MIGRATION (SAFE)
+   Migration (SAFE)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -106,7 +113,7 @@ await migrate();
 /* ===============================
    Helpers
 ================================ */
-function getMarketPrice(marketId, outcome) {
+function getMarketPrice(marketId: string, outcome: string): number {
   if (outcome === "YES") return 0.62;
   if (outcome === "NO") return 0.38;
   return 0;
@@ -169,7 +176,7 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   TRADE (BUY / SELL)
+   Trade (BUY / SELL)
 ================================ */
 app.post("/trade", requireBackendAuth, async (req, res) => {
   const { market_id, outcome, side, shares, price } = req.body;
@@ -276,7 +283,7 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
     await client.query("COMMIT");
 
     res.json({ ok: true, realized_pnl: realizedPnl });
-  } catch (e) {
+  } catch (e: any) {
     await client.query("ROLLBACK");
     res.status(400).json({ error: e.message });
   } finally {
