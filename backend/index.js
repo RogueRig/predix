@@ -152,8 +152,7 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   BUY TRADE (IDEMPOTENT & SAFE)
-   POST /trade/buy
+   BUY TRADE
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
@@ -165,7 +164,6 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
     }
 
     const { market_id, outcome, shares, price } = req.body;
-
     if (!market_id || !outcome || !shares || !price) {
       return res.status(400).json({ error: "Invalid trade payload" });
     }
@@ -174,29 +172,18 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 
     await client.query("BEGIN");
 
-    // 🔒 Lock user row
-    const userRes = await client.query(
+    const user = await client.query(
       `SELECT balance FROM users WHERE id = $1 FOR UPDATE`,
       [req.userId]
     );
 
-    if (userRes.rows.length === 0) {
-      throw new Error("User not found");
-    }
-
-    const balance = Number(userRes.rows[0].balance);
-
-    if (balance < cost) {
+    if (Number(user.rows[0].balance) < cost) {
       await client.query("ROLLBACK");
       return res.status(400).json({ error: "Insufficient balance" });
     }
 
-    // ✅ Idempotency check
     const existing = await client.query(
-      `
-      SELECT id FROM portfolios
-      WHERE user_id = $1 AND idempotency_key = $2
-      `,
+      `SELECT id FROM portfolios WHERE user_id = $1 AND idempotency_key = $2`,
       [req.userId, idempotencyKey]
     );
 
@@ -205,7 +192,6 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
       return res.json({ status: "duplicate_ignored" });
     }
 
-    // Insert portfolio
     await client.query(
       `
       INSERT INTO portfolios
@@ -215,26 +201,90 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
       [req.userId, market_id, outcome, shares, price, idempotencyKey]
     );
 
-    // Update balance
     await client.query(
-      `
-      UPDATE users
-      SET balance = balance - $1
-      WHERE id = $2
-      `,
+      `UPDATE users SET balance = balance - $1 WHERE id = $2`,
       [cost, req.userId]
     );
 
     await client.query("COMMIT");
 
-    res.json({
-      status: "filled",
-      spent: cost,
-    });
+    res.json({ status: "filled", spent: cost });
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("Buy failed:", err);
+    console.error(err);
     res.status(500).json({ error: "Trade failed" });
+  } finally {
+    client.release();
+  }
+});
+
+/* ===============================
+   SELL TRADE (NEW ✅)
+================================ */
+app.post("/trade/sell", requireBackendAuth, async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const idempotencyKey = req.headers["idempotency-key"];
+    if (!idempotencyKey) {
+      return res.status(400).json({ error: "Missing Idempotency-Key header" });
+    }
+
+    const { market_id, outcome, shares, price } = req.body;
+    if (!market_id || !outcome || !shares || !price) {
+      return res.status(400).json({ error: "Invalid trade payload" });
+    }
+
+    const proceeds = Number(shares) * Number(price);
+
+    await client.query("BEGIN");
+
+    const existing = await client.query(
+      `SELECT id FROM portfolios WHERE user_id = $1 AND idempotency_key = $2`,
+      [req.userId, idempotencyKey]
+    );
+
+    if (existing.rows.length > 0) {
+      await client.query("ROLLBACK");
+      return res.json({ status: "duplicate_ignored" });
+    }
+
+    const pos = await client.query(
+      `
+      SELECT COALESCE(SUM(shares), 0) AS total_shares
+      FROM portfolios
+      WHERE user_id = $1 AND market_id = $2 AND outcome = $3
+      FOR UPDATE
+      `,
+      [req.userId, market_id, outcome]
+    );
+
+    if (Number(pos.rows[0].total_shares) < Number(shares)) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Not enough shares to sell" });
+    }
+
+    await client.query(
+      `
+      INSERT INTO portfolios
+      (user_id, market_id, outcome, shares, avg_price, idempotency_key)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      `,
+      [req.userId, market_id, outcome, -shares, price, idempotencyKey]
+    );
+
+    await client.query(
+      `UPDATE users SET balance = balance + $1 WHERE id = $2`,
+      [proceeds, req.userId]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({ status: "sold", received: proceeds });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ error: "Sell failed" });
   } finally {
     client.release();
   }
