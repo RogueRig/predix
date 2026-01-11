@@ -55,7 +55,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   MIGRATION (BULLETPROOF)
+   MIGRATION (HARD FIX)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -83,29 +83,34 @@ async function migrate() {
     );
   `);
 
+  /* 🔥 HARD RESET OF BROKEN TRADES TABLE */
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS trades (
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'trades'
+      ) THEN
+        ALTER TABLE trades RENAME TO trades_legacy;
+      END IF;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE TABLE trades (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       market_id TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      side TEXT CHECK (side IN ('buy','sell')),
+      shares NUMERIC NOT NULL,
+      price NUMERIC NOT NULL,
+      realized_pnl NUMERIC NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
 
-  /* 🔧 PATCH ALL LEGACY SCHEMA DRIFT */
-  await pool.query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS outcome TEXT;`);
-  await pool.query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS side TEXT;`);
-  await pool.query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS shares NUMERIC;`);
-  await pool.query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS price NUMERIC;`);
-  await pool.query(
-    `ALTER TABLE trades ADD COLUMN IF NOT EXISTS realized_pnl NUMERIC NOT NULL DEFAULT 0;`
-  );
-
-  await pool.query(
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS realized_pnl NUMERIC NOT NULL DEFAULT 0;`
-  );
-
-  console.log("✅ Database schema fully aligned");
+  console.log("✅ Database schema repaired (trades rebuilt)");
 }
 
 await migrate();
@@ -229,35 +234,6 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
           [newShares, newAvg, req.userId, market_id, outcome]
         );
       }
-    } else {
-      if (posRes.rows.length === 0 || Number(posRes.rows[0].shares) < qty) {
-        throw new Error("Insufficient shares");
-      }
-
-      const cur = posRes.rows[0];
-      realizedPnl = (price - cur.avg_price) * qty;
-
-      const remaining = Number(cur.shares) - qty;
-
-      if (remaining === 0) {
-        await client.query(
-          `DELETE FROM positions WHERE user_id=$1 AND market_id=$2 AND outcome=$3`,
-          [req.userId, market_id, outcome]
-        );
-      } else {
-        await client.query(
-          `
-          UPDATE positions SET shares=$1
-          WHERE user_id=$2 AND market_id=$3 AND outcome=$4
-          `,
-          [remaining, req.userId, market_id, outcome]
-        );
-      }
-
-      await client.query(
-        `UPDATE users SET realized_pnl = realized_pnl + $1 WHERE id=$2`,
-        [realizedPnl, req.userId]
-      );
     }
 
     await client.query(
