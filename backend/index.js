@@ -48,7 +48,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   MIGRATION
+   Migration
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -147,7 +147,7 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   BUY / SELL (single model)
+   Trade (Buy / Sell)
 ================================ */
 app.post("/trade", requireBackendAuth, async (req, res) => {
   const { market_id, outcome, shares, price } = req.body;
@@ -170,18 +170,21 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   PORTFOLIO (BALANCE + POSITIONS + PNL)
+   Portfolio (Balance + Positions + PnL)
 ================================ */
 app.get("/portfolio", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `
-    SELECT market_id, outcome,
-           SUM(shares) AS total_shares,
-           SUM(shares * avg_price) AS cost_basis
+    SELECT
+      market_id,
+      outcome,
+      SUM(shares) AS total_shares,
+      SUM(CASE WHEN shares > 0 THEN shares * avg_price ELSE 0 END) AS buy_cost,
+      SUM(CASE WHEN shares < 0 THEN ABS(shares * avg_price) ELSE 0 END) AS sell_proceeds
     FROM portfolios
     WHERE user_id = $1
     GROUP BY market_id, outcome
-    HAVING SUM(shares) <> 0
+    HAVING SUM(shares) <> 0;
     `,
     [req.userId]
   );
@@ -190,20 +193,25 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
   const positions = [];
 
   for (const r of rows) {
-    const currentPrice = getMarketPrice(r.market_id, r.outcome);
-    const positionValue = Number(r.total_shares) * currentPrice;
-    const pnlUnrealized = positionValue - Number(r.cost_basis);
+    balance -= Number(r.buy_cost);
+    balance += Number(r.sell_proceeds);
 
-    balance -= Number(r.cost_basis);
+    const netShares = Number(r.total_shares);
+    const avgPrice =
+      netShares !== 0 ? Number(r.buy_cost) / Math.abs(netShares) : 0;
+
+    const currentPrice = getMarketPrice(r.market_id, r.outcome);
+    const positionValue = netShares * currentPrice;
+    const unrealizedPnl = positionValue - (netShares * avgPrice);
 
     positions.push({
       market_id: r.market_id,
       outcome: r.outcome,
-      shares: Number(r.total_shares),
-      avg_price: Number(r.cost_basis) / Number(r.total_shares),
+      shares: netShares,
+      avg_price: avgPrice,
       current_price: currentPrice,
       position_value: positionValue,
-      unrealized_pnl: pnlUnrealized,
+      unrealized_pnl: unrealizedPnl,
     });
   }
 
