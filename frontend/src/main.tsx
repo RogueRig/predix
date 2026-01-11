@@ -52,7 +52,6 @@ function Portfolio() {
   const [error, setError] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<string | null>(null);
 
-  // Trade form
   const [marketId, setMarketId] = React.useState("test-market");
   const [outcome, setOutcome] = React.useState("YES");
   const [shares, setShares] = React.useState(1);
@@ -61,27 +60,25 @@ function Portfolio() {
   /* ===============================
      TOKENS (STRICT)
   ================================ */
-  async function getPrivyTokenStrict(): Promise<string> {
-    for (let i = 0; i < 10; i++) {
-      const t = await getAccessToken();
-      if (typeof t === "string") return t;
-      await new Promise((r) => setTimeout(r, 300));
-    }
-    throw new Error("Privy token unavailable");
-  }
-
   async function getBackendTokenStrict(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
-    if (typeof cached === "string") return cached;
+    if (cached) return cached;
 
-    const privyToken = await getPrivyTokenStrict();
+    let privyToken: string | null = null;
+    for (let i = 0; i < 10; i++) {
+      const t = await getAccessToken();
+      if (typeof t === "string") {
+        privyToken = t;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+
+    if (!privyToken) throw new Error("Privy token unavailable");
 
     const res = await fetch(
       "https://predix-backend.onrender.com/auth/privy",
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${privyToken}` },
-      }
+      { method: "POST", headers: { Authorization: `Bearer ${privyToken}` } }
     );
 
     const json = await res.json();
@@ -94,33 +91,28 @@ function Portfolio() {
   }
 
   /* ===============================
-     LOAD DATA
+     LOAD PORTFOLIO
   ================================ */
-  async function refreshAll() {
+  async function refreshPortfolio() {
     const token = await getBackendTokenStrict();
 
-    const [metaRes, posRes] = await Promise.all([
-      fetch("https://predix-backend.onrender.com/portfolio/meta", {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch("https://predix-backend.onrender.com/portfolio/positions", {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-    ]);
+    const res = await fetch(
+      "https://predix-backend.onrender.com/portfolio",
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
 
-    const metaJson = await metaRes.json();
-    const posJson = await posRes.json();
+    const json = await res.json();
 
-    setBalance(Number(metaJson.balance));
-    setPositions(posJson.positions || []);
+    setBalance(Number(json.balance));
+    setPositions(json.positions || []);
   }
 
   React.useEffect(() => {
-    refreshAll().catch((e) => setError(e.message));
+    refreshPortfolio().catch((e) => setError(e.message));
   }, []);
 
   /* ===============================
-     BUY / SELL
+     TRADE
   ================================ */
   async function trade(side: "buy" | "sell") {
     try {
@@ -129,8 +121,10 @@ function Portfolio() {
 
       const token = await getBackendTokenStrict();
 
+      const signedShares = side === "buy" ? shares : -shares;
+
       const res = await fetch(
-        `https://predix-backend.onrender.com/trade/${side}`,
+        "https://predix-backend.onrender.com/trade",
         {
           method: "POST",
           headers: {
@@ -141,7 +135,7 @@ function Portfolio() {
           body: JSON.stringify({
             market_id: marketId,
             outcome,
-            shares,
+            shares: signedShares,
             price,
           }),
         }
@@ -156,7 +150,7 @@ function Portfolio() {
           : `Sold ${shares} @ ${price}`
       );
 
-      await refreshAll();
+      await refreshPortfolio();
     } catch (e: any) {
       setError(e.message);
     }
@@ -169,20 +163,15 @@ function Portfolio() {
       <h3>Positions</h3>
       {positions.length === 0 && <p>No positions</p>}
       {positions.map((p, i) => (
-        <div
-          key={i}
-          style={{
-            border: "1px solid #333",
-            borderRadius: 8,
-            padding: 12,
-            marginBottom: 12,
-          }}
-        >
+        <div key={i} style={{ border: "1px solid #333", padding: 12 }}>
           <strong>
             {p.market_id} — {p.outcome}
           </strong>
-          <div>Shares: {p.total_shares}</div>
-          <div>Avg Price: {Number(p.avg_price).toFixed(4)}</div>
+          <div>Shares: {p.shares}</div>
+          <div>Avg Price: {p.avg_price.toFixed(4)}</div>
+          <div>Current Price: {p.current_price.toFixed(4)}</div>
+          <div>Position Value: {p.position_value.toFixed(2)}</div>
+          <div>Unrealized PnL: {p.unrealized_pnl.toFixed(2)}</div>
         </div>
       ))}
 
