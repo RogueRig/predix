@@ -39,15 +39,15 @@ const pool = new Pool({
 });
 
 /* ===============================
-   Privy
+   Privy (JS SAFE)
 ================================ */
 const privy = new PrivyClient(
-  process.env.PRIVY_APP_ID!,
-  process.env.PRIVY_APP_SECRET!
+  process.env.PRIVY_APP_ID,
+  process.env.PRIVY_APP_SECRET
 );
 
 /* ===============================
-   SAFE MIGRATION (NO DATA LOSS)
+   SAFE MIGRATION
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -81,12 +81,12 @@ async function migrate() {
 await migrate();
 
 /* ===============================
-   AUTH (WALLET-LOCKED)
+   AUTH (WALLET LOCKED)
 ================================ */
 app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
+    if (!auth || !auth.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
@@ -112,7 +112,7 @@ app.post("/auth/privy", async (req, res) => {
 
     const token = jwt.sign(
       { uid: rows[0].id },
-      process.env.BACKEND_JWT_SECRET!,
+      process.env.BACKEND_JWT_SECRET,
       { expiresIn: "7d" }
     );
 
@@ -126,16 +126,16 @@ app.post("/auth/privy", async (req, res) => {
 /* ===============================
    JWT GUARD
 ================================ */
-function requireBackendAuth(req: any, res: any, next: any) {
+function requireBackendAuth(req, res, next) {
   try {
     const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
+    if (!auth || !auth.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
 
     req.userId = jwt.verify(
       auth.replace("Bearer ", ""),
-      process.env.BACKEND_JWT_SECRET!
+      process.env.BACKEND_JWT_SECRET
     ).uid;
 
     next();
@@ -145,7 +145,7 @@ function requireBackendAuth(req: any, res: any, next: any) {
 }
 
 /* ===============================
-   BUY TRADE
+   BUY
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
@@ -157,10 +157,6 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
     }
 
     const { market_id, outcome, shares, price } = req.body;
-    if (!market_id || !outcome || !shares || !price) {
-      return res.status(400).json({ error: "Invalid payload" });
-    }
-
     const cost = Number(shares) * Number(price);
 
     await client.query("BEGIN");
@@ -171,7 +167,6 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
     );
 
     const balance = Number(balRes.rows[0].balance);
-
     if (balance < cost) {
       await client.query("ROLLBACK");
       return res.status(400).json({ error: "Insufficient balance" });
@@ -193,14 +188,9 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 
     await client.query("COMMIT");
 
-    res.json({
-      status: "filled",
-      spent: cost,
-      remaining_balance: balance - cost,
-    });
+    res.json({ spent: cost });
   } catch (e) {
     await client.query("ROLLBACK");
-    console.error(e);
     res.status(500).json({ error: String(e) });
   } finally {
     client.release();
@@ -210,19 +200,18 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 /* ===============================
    BALANCE
 ================================ */
-app.get("/portfolio/meta", requireBackendAuth, async (req: any, res) => {
+app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `SELECT balance FROM users WHERE id = $1`,
     [req.userId]
   );
-
   res.json({ balance: Number(rows[0]?.balance ?? 0) });
 });
 
 /* ===============================
-   POSITIONS (AGGREGATED)
+   POSITIONS
 ================================ */
-app.get("/portfolio/positions", requireBackendAuth, async (req: any, res) => {
+app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `
     SELECT
@@ -248,10 +237,8 @@ app.get("/portfolio/positions", requireBackendAuth, async (req: any, res) => {
 /* ===============================
    HEALTH
 ================================ */
-app.get("/", (_, res) => {
-  res.json({ ok: true });
-});
+app.get("/", (_, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
-  console.log("🚀 Backend running (wallet-locked identity)");
+  console.log("🚀 Backend running (JS-safe)");
 });
