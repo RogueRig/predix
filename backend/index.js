@@ -54,39 +54,6 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   MIGRATION (SAFE)
-================================ */
-async function migrate() {
-  await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      privy_user_id TEXT UNIQUE NOT NULL,
-      email TEXT,
-      wallet_address TEXT,
-      realized_pnl NUMERIC NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS positions (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      market_id TEXT NOT NULL,
-      outcome TEXT NOT NULL,
-      shares NUMERIC NOT NULL,
-      avg_price NUMERIC NOT NULL,
-      UNIQUE (user_id, market_id, outcome)
-    );
-  `);
-
-  console.log("✅ Database ready");
-}
-await migrate();
-
-/* ===============================
    Helpers
 ================================ */
 function getMarketPrice(marketId, outcome) {
@@ -152,7 +119,7 @@ function requireBackendAuth(req, res, next) {
 }
 
 /* ===============================
-   TRADE (BUY / SELL) — FIXED
+   Trade (BUY / SELL)
 ================================ */
 app.post("/trade", requireBackendAuth, async (req, res) => {
   const { market_id, outcome, side, shares, price } = req.body;
@@ -182,7 +149,8 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
       if (posRes.rows.length === 0) {
         await client.query(
           `
-          INSERT INTO positions (user_id, market_id, outcome, shares, avg_price)
+          INSERT INTO positions
+          (user_id, market_id, outcome, shares, avg_price)
           VALUES ($1,$2,$3,$4,$5)
           `,
           [req.userId, market_id, outcome, shares, price]
@@ -204,7 +172,9 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
           [newShares, newAvg, req.userId, market_id, outcome]
         );
       }
-    } else if (side === "sell") {
+    }
+
+    if (side === "sell") {
       if (posRes.rows.length === 0 || Number(posRes.rows[0].shares) < shares) {
         throw new Error("Insufficient shares");
       }
@@ -244,8 +214,17 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
       );
     }
 
+    await client.query(
+      `
+      INSERT INTO trades
+      (user_id, market_id, outcome, side, shares, price, realized_pnl)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `,
+      [req.userId, market_id, outcome, side, shares, price, realizedPnl]
+    );
+
     await client.query("COMMIT");
-    res.json({ ok: true, realized_pnl: realizedPnl });
+    res.json({ ok: true });
   } catch (e) {
     await client.query("ROLLBACK");
     res.status(400).json({ error: e.message });
@@ -255,7 +234,7 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   PORTFOLIO
+   Portfolio
 ================================ */
 app.get("/portfolio", requireBackendAuth, async (req, res) => {
   const posRes = await pool.query(
@@ -307,19 +286,12 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Trade History (READ ONLY)
+   Trades (FIXED)
 ================================ */
 app.get("/trades", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `
-    SELECT
-      market_id,
-      outcome,
-      side,
-      shares,
-      price,
-      realized_pnl,
-      created_at
+    SELECT market_id, outcome, side, shares, price, realized_pnl, created_at
     FROM trades
     WHERE user_id = $1
     ORDER BY created_at DESC
