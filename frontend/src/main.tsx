@@ -1,6 +1,12 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useNavigate,
+} from "react-router-dom";
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 
 /* ===============================
@@ -16,7 +22,17 @@ function Protected({ children }: { children: React.ReactNode }) {
    Login
 ================================ */
 function Login() {
-  const { login } = usePrivy();
+  const { login, ready, authenticated } = usePrivy();
+  const navigate = useNavigate();
+
+  React.useEffect(() => {
+    if (ready && authenticated) {
+      navigate("/portfolio", { replace: true });
+    }
+  }, [ready, authenticated, navigate]);
+
+  if (!ready) return <p style={{ padding: 20 }}>Loading…</p>;
+
   return (
     <div style={{ padding: 20 }}>
       <h1>Predix</h1>
@@ -43,7 +59,7 @@ function Portfolio() {
   const [price, setPrice] = React.useState(1);
 
   /* ===============================
-     STRICT TOKENS
+     TOKENS (STRICT)
   ================================ */
   async function getPrivyTokenStrict(): Promise<string> {
     for (let i = 0; i < 10; i++) {
@@ -146,16 +162,12 @@ function Portfolio() {
     }
   }
 
-  /* ===============================
-     UI
-  ================================ */
   return (
     <div style={{ padding: 20 }}>
       <h2>Balance: {balance.toFixed(2)}</h2>
 
       <h3>Positions</h3>
       {positions.length === 0 && <p>No positions</p>}
-
       {positions.map((p, i) => (
         <div
           key={i}
@@ -176,25 +188,19 @@ function Portfolio() {
 
       <h3>Trade</h3>
 
-      <input
-        value={marketId}
-        onChange={(e) => setMarketId(e.target.value)}
-      />
+      <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
       <br />
-
       <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
         <option value="YES">YES</option>
         <option value="NO">NO</option>
       </select>
       <br />
-
       <input
         type="number"
         value={shares}
         onChange={(e) => setShares(Number(e.target.value))}
       />
       <br />
-
       <input
         type="number"
         value={price}
