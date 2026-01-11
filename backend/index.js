@@ -47,7 +47,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   MIGRATION (SAFE)
+   SAFE MIGRATION (DEV FIX)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -71,68 +71,60 @@ async function migrate() {
       outcome TEXT NOT NULL,
       shares NUMERIC NOT NULL,
       avg_price NUMERIC NOT NULL,
-      idempotency_key TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      idempotency_key TEXT
     );
   `);
 
+  // ✅ DEV-ONLY BALANCE FIX
   await pool.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS portfolios_uid_idempo
-    ON portfolios(user_id, idempotency_key)
-    WHERE idempotency_key IS NOT NULL;
+    UPDATE users
+    SET balance = 1000
+    WHERE balance = 0;
   `);
 
-  console.log("✅ DB ready");
+  console.log("✅ Migration + balance backfill complete");
 }
 
 await migrate();
 
 /* ===============================
-   AUTH
+   Auth
 ================================ */
 app.post("/auth/privy", async (req, res) => {
-  try {
-    const auth = req.headers.authorization;
-    if (!auth?.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Missing Authorization header" });
-    }
-
-    const verified = await privy.verifyAuthToken(
-      auth.replace("Bearer ", "")
-    );
-
-    const { rows } = await pool.query(
-      `
-      INSERT INTO users (privy_user_id, email, wallet_address)
-      VALUES ($1,$2,$3)
-      ON CONFLICT (privy_user_id)
-      DO UPDATE SET
-        email = EXCLUDED.email,
-        wallet_address = EXCLUDED.wallet_address
-      RETURNING id;
-      `,
-      [
-        verified.userId,
-        verified.email ?? null,
-        verified.wallet?.address ?? null,
-      ]
-    );
-
-    const token = jwt.sign(
-      { uid: rows[0].id },
-      process.env.BACKEND_JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
-    res.json({ token });
-  } catch (e) {
-    console.error(e);
-    res.status(401).json({ error: "Backend auth failed" });
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Missing Authorization header" });
   }
+
+  const verified = await privy.verifyAuthToken(auth.replace("Bearer ", ""));
+
+  const { rows } = await pool.query(
+    `
+    INSERT INTO users (privy_user_id, email, wallet_address)
+    VALUES ($1,$2,$3)
+    ON CONFLICT (privy_user_id)
+    DO UPDATE SET email = EXCLUDED.email
+    RETURNING id;
+    `,
+    [
+      verified.userId,
+      verified.email ?? null,
+      verified.wallet?.address ?? null,
+    ]
+  );
+
+  const token = jwt.sign(
+    { uid: rows[0].id },
+    process.env.BACKEND_JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+
+  res.json({ token });
 });
 
 /* ===============================
-   JWT GUARD
+   JWT Guard
 ================================ */
 function requireBackendAuth(req, res, next) {
   try {
@@ -140,13 +132,10 @@ function requireBackendAuth(req, res, next) {
     if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
-
-    const decoded = jwt.verify(
+    req.userId = jwt.verify(
       auth.replace("Bearer ", ""),
       process.env.BACKEND_JWT_SECRET
-    );
-
-    req.userId = decoded.uid;
+    ).uid;
     next();
   } catch {
     res.status(401).json({ error: "Invalid backend token" });
@@ -157,31 +146,26 @@ function requireBackendAuth(req, res, next) {
    BUY
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
+  const { market_id, outcome, shares, price } = req.body;
+  const key = req.headers["idempotency-key"];
+
+  if (!market_id || !outcome || !shares || !price || !key) {
+    return res.status(400).json({ error: "Invalid payload" });
+  }
+
+  const cost = Number(shares) * Number(price);
+
   const client = await pool.connect();
   try {
-    const key = req.headers["idempotency-key"];
-    if (typeof key !== "string") {
-      return res.status(400).json({ error: "Missing Idempotency-Key" });
-    }
-
-    const { market_id, outcome, shares, price } = req.body;
-    if (!market_id || !outcome || !shares || !price) {
-      return res.status(400).json({ error: "Invalid payload" });
-    }
-
-    const cost = Number(shares) * Number(price);
-
     await client.query("BEGIN");
 
-    const balRes = await client.query(
+    const bal = await client.query(
       `SELECT balance FROM users WHERE id = $1 FOR UPDATE`,
       [req.userId]
     );
 
-    const balance = Number(balRes.rows[0].balance);
-    if (balance < cost) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({ error: "Insufficient balance" });
+    if (Number(bal.rows[0].balance) < cost) {
+      throw new Error("Insufficient balance");
     }
 
     await client.query(
@@ -189,7 +173,6 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
       INSERT INTO portfolios
       (user_id, market_id, outcome, shares, avg_price, idempotency_key)
       VALUES ($1,$2,$3,$4,$5,$6)
-      ON CONFLICT (user_id, idempotency_key) DO NOTHING;
       `,
       [req.userId, market_id, outcome, shares, price, key]
     );
@@ -200,56 +183,45 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
     );
 
     await client.query("COMMIT");
-
     res.json({ spent: cost });
-  } catch (e) {
+  } catch (e: any) {
     await client.query("ROLLBACK");
-    console.error(e);
-    res.status(500).json({ error: "Trade failed" });
+    res.status(400).json({ error: e.message });
   } finally {
     client.release();
   }
 });
 
 /* ===============================
-   BALANCE (AUTHORITATIVE)
+   Balance
 ================================ */
 app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `SELECT balance FROM users WHERE id = $1`,
     [req.userId]
   );
-
-  res.json({ balance: Number(rows[0]?.balance ?? 0) });
+  res.json({ balance: Number(rows[0].balance) });
 });
 
 /* ===============================
-   POSITIONS (AUTHORITATIVE)
+   Positions
 ================================ */
 app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
     `
-    SELECT
-      market_id,
-      outcome,
-      SUM(shares)::FLOAT AS total_shares,
-      (SUM(shares * avg_price) / NULLIF(SUM(shares),0))::FLOAT AS avg_price
+    SELECT market_id, outcome,
+           SUM(shares) AS total_shares,
+           AVG(avg_price) AS avg_price
     FROM portfolios
     WHERE user_id = $1
     GROUP BY market_id, outcome
     HAVING SUM(shares) <> 0
-    ORDER BY market_id, outcome;
     `,
     [req.userId]
   );
 
   res.json({ positions: rows });
 });
-
-/* ===============================
-   HEALTH
-================================ */
-app.get("/", (_, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
   console.log("🚀 Backend running");
