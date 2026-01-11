@@ -224,7 +224,7 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   🔥 SELL TRADE (NEW)
+   SELL TRADE (NEW ✅)
 ================================ */
 app.post("/trade/sell", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
@@ -254,13 +254,14 @@ app.post("/trade/sell", requireBackendAuth, async (req, res) => {
       [req.userId, market_id, outcome]
     );
 
-    const totalShares = Number(posRes.rows[0].total_shares);
+    const owned = Number(posRes.rows[0].total_shares);
 
-    if (totalShares < Number(shares)) {
+    if (owned < Number(shares)) {
       await client.query("ROLLBACK");
       return res.status(400).json({
         error: "Not enough shares to sell",
-        owned: totalShares,
+        owned,
+        attempting: shares,
       });
     }
 
@@ -270,7 +271,7 @@ app.post("/trade/sell", requireBackendAuth, async (req, res) => {
       (user_id, market_id, outcome, shares, avg_price, idempotency_key)
       VALUES ($1,$2,$3,$4,$5,$6)
       `,
-      [req.userId, market_id, outcome, -shares, price, key]
+      [req.userId, market_id, outcome, -Number(shares), price, key]
     );
 
     await client.query(
