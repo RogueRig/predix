@@ -47,11 +47,12 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   Migration (SAFE)
+   SAFE MIGRATION (NO DATA LOSS)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 
+  // Users table
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -63,6 +64,7 @@ async function migrate() {
     );
   `);
 
+  // Portfolios base table
   await pool.query(`
     CREATE TABLE IF NOT EXISTS portfolios (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -71,13 +73,32 @@ async function migrate() {
       outcome TEXT NOT NULL,
       shares NUMERIC NOT NULL,
       avg_price NUMERIC NOT NULL,
-      idempotency_key TEXT NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE (user_id, idempotency_key)
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
 
-  console.log("✅ Migration complete");
+  // 🔧 ADD MISSING COLUMN (THIS FIXES YOUR ERROR)
+  await pool.query(`
+    ALTER TABLE portfolios
+    ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+  `);
+
+  // 🔧 ADD UNIQUE CONSTRAINT SAFELY
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'portfolios_user_id_idempotency_key_key'
+      ) THEN
+        ALTER TABLE portfolios
+        ADD CONSTRAINT portfolios_user_id_idempotency_key_key
+        UNIQUE (user_id, idempotency_key);
+      END IF;
+    END$$;
+  `);
+
+  console.log("✅ Database migration complete");
 }
 
 await migrate();
@@ -89,17 +110,19 @@ app.post("/auth/privy", async (req, res) => {
   try {
     const auth = req.headers.authorization;
     if (!auth?.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Missing auth header" });
+      return res.status(401).json({ error: "Missing Authorization header" });
     }
 
-    const verified = await privy.verifyAuthToken(auth.replace("Bearer ", ""));
+    const verified = await privy.verifyAuthToken(
+      auth.replace("Bearer ", "")
+    );
 
     const { rows } = await pool.query(
       `
       INSERT INTO users (privy_user_id, email, wallet_address)
       VALUES ($1,$2,$3)
       ON CONFLICT (privy_user_id)
-      DO UPDATE SET email=EXCLUDED.email
+      DO UPDATE SET email = EXCLUDED.email
       RETURNING id;
       `,
       [
@@ -118,7 +141,7 @@ app.post("/auth/privy", async (req, res) => {
     res.json({ token });
   } catch (e) {
     console.error(e);
-    res.status(401).json({ error: "Auth failed" });
+    res.status(401).json({ error: "Backend auth failed" });
   }
 });
 
@@ -131,65 +154,52 @@ function requireBackendAuth(req, res, next) {
     if (!auth?.startsWith("Bearer ")) {
       return res.status(401).json({ error: "Missing Authorization header" });
     }
-    const decoded = jwt.verify(
+    req.userId = jwt.verify(
       auth.replace("Bearer ", ""),
       process.env.BACKEND_JWT_SECRET
-    );
-    req.userId = decoded.uid;
+    ).uid;
     next();
-  } catch (e) {
-    return res.status(401).json({ error: "Invalid token" });
+  } catch {
+    res.status(401).json({ error: "Invalid backend token" });
   }
 }
 
 /* ===============================
-   BUY — DIAGNOSTIC MODE
+   BUY TRADE (NOW WILL WORK)
 ================================ */
 app.post("/trade/buy", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
 
   try {
-    const idKey = req.headers["idempotency-key"];
-    if (typeof idKey !== "string") {
-      return res.status(400).json({
-        step: "header",
-        error: "Missing Idempotency-Key",
-      });
+    const key = req.headers["idempotency-key"];
+    if (typeof key !== "string") {
+      return res.status(400).json({ error: "Missing Idempotency-Key" });
     }
 
     const { market_id, outcome, shares, price } = req.body;
-
     if (!market_id || !outcome || !shares || !price) {
-      return res.status(400).json({
-        step: "payload",
-        error: "Invalid payload",
-        body: req.body,
-      });
+      return res.status(400).json({ error: "Invalid payload" });
     }
+
+    const cost = Number(shares) * Number(price);
 
     await client.query("BEGIN");
 
-    const userRes = await client.query(
+    const balRes = await client.query(
       `SELECT balance FROM users WHERE id = $1 FOR UPDATE`,
       [req.userId]
     );
 
-    if (userRes.rows.length === 0) {
+    if (balRes.rows.length === 0) {
       await client.query("ROLLBACK");
-      return res.status(404).json({
-        step: "user_lookup",
-        error: "User row not found",
-        userId: req.userId,
-      });
+      return res.status(404).json({ error: "User not found" });
     }
 
-    const balance = Number(userRes.rows[0].balance);
-    const cost = Number(shares) * Number(price);
+    const balance = Number(balRes.rows[0].balance);
 
     if (balance < cost) {
       await client.query("ROLLBACK");
       return res.status(400).json({
-        step: "balance_check",
         error: "Insufficient balance",
         balance,
         cost,
@@ -202,7 +212,7 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
       (user_id, market_id, outcome, shares, avg_price, idempotency_key)
       VALUES ($1,$2,$3,$4,$5,$6)
       `,
-      [req.userId, market_id, outcome, shares, price, idKey]
+      [req.userId, market_id, outcome, shares, price, key]
     );
 
     await client.query(
@@ -213,17 +223,14 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
     await client.query("COMMIT");
 
     res.json({
-      status: "ok",
+      status: "filled",
       spent: cost,
-      remaining: balance - cost,
+      remaining_balance: balance - cost,
     });
   } catch (e) {
     await client.query("ROLLBACK");
     console.error(e);
-    res.status(500).json({
-      step: "exception",
-      error: e.message,
-    });
+    res.status(500).json({ error: e.message });
   } finally {
     client.release();
   }
