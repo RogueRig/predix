@@ -47,7 +47,7 @@ const privy = new PrivyClient(
 );
 
 /* ===============================
-   SAFE MIGRATION (NO DATA LOSS)
+   SAFE MIGRATION (RENDER SAFE)
 ================================ */
 async function migrate() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
@@ -76,10 +76,20 @@ async function migrate() {
     );
   `);
 
+  // ✅ SAFE UNIQUE CONSTRAINT (NO "IF NOT EXISTS" BUG)
   await pool.query(`
-    ALTER TABLE portfolios
-    ADD CONSTRAINT IF NOT EXISTS portfolios_user_id_idempotency_key_key
-    UNIQUE (user_id, idempotency_key);
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'portfolios_user_id_idempotency_key_key'
+      ) THEN
+        ALTER TABLE portfolios
+        ADD CONSTRAINT portfolios_user_id_idempotency_key_key
+        UNIQUE (user_id, idempotency_key);
+      END IF;
+    END$$;
   `);
 
   console.log("✅ Database migration complete");
@@ -204,7 +214,7 @@ app.post("/trade/buy", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   SELL (FIXED CORRECTLY)
+   SELL (AGGREGATE-SAFE)
 ================================ */
 app.post("/trade/sell", requireBackendAuth, async (req, res) => {
   const client = await pool.connect();
@@ -221,7 +231,6 @@ app.post("/trade/sell", requireBackendAuth, async (req, res) => {
 
     await client.query("BEGIN");
 
-    // 🔒 Lock rows FIRST (NO AGGREGATE HERE)
     const rows = await client.query(
       `
       SELECT shares
@@ -232,17 +241,14 @@ app.post("/trade/sell", requireBackendAuth, async (req, res) => {
       [req.userId, market_id, outcome]
     );
 
-    const totalShares = rows.rows.reduce(
-      (s, r) => s + Number(r.shares),
+    const owned = rows.rows.reduce(
+      (sum, r) => sum + Number(r.shares),
       0
     );
 
-    if (totalShares < qty) {
+    if (owned < qty) {
       await client.query("ROLLBACK");
-      return res.status(400).json({
-        error: "Not enough shares to sell",
-        owned: totalShares,
-      });
+      return res.status(400).json({ error: "Not enough shares" });
     }
 
     await client.query(
@@ -282,7 +288,7 @@ app.get("/portfolio/meta", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Positions (AGGREGATED)
+   Positions
 ================================ */
 app.get("/portfolio/positions", requireBackendAuth, async (req, res) => {
   const { rows } = await pool.query(
