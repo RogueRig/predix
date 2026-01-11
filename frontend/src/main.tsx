@@ -10,7 +10,7 @@ import {
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 
 /* ===============================
-   🔐 Auth Guard
+   Auth Guard
 ================================ */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { ready, authenticated } = usePrivy();
@@ -19,7 +19,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 /* ===============================
-   🔑 Login Page
+   Login Page
 ================================ */
 function LoginPage() {
   const { login, ready, authenticated } = usePrivy();
@@ -40,161 +40,102 @@ function LoginPage() {
 }
 
 /* ===============================
-   📊 Portfolio Page
+   Portfolio Page
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
-  const [balance, setBalance] = React.useState<number>(0);
-  const [loading, setLoading] = React.useState<boolean>(true);
-  const [status, setStatus] = React.useState<string>("");
+  const [balance, setBalance] = React.useState(0);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
 
-  const [marketId, setMarketId] = React.useState<string>("");
-  const [outcome, setOutcome] = React.useState<"YES" | "NO">("YES");
-  const [shares, setShares] = React.useState<string>("");
-  const [price, setPrice] = React.useState<string>("");
+  // Trade form
+  const [marketId, setMarketId] = React.useState("test-market");
+  const [outcome, setOutcome] = React.useState("YES");
+  const [shares, setShares] = React.useState(10);
+  const [price, setPrice] = React.useState(1);
 
-  /* ---------- AUTH + BALANCE ---------- */
-  React.useEffect(() => {
-    let cancelled = false;
+  async function getBackendToken(): Promise<string> {
+    const cached = localStorage.getItem("backend_token");
+    if (typeof cached === "string") return cached;
 
-    async function bootstrap(): Promise<void> {
-      if (!ready || !authenticated) return;
-
-      try {
-        setLoading(true);
-
-        let backendToken = localStorage.getItem("backend_token");
-
-        if (backendToken === null) {
-          let privyToken: string | null = null;
-
-          for (let i = 0; i < 10; i++) {
-            const t = await getAccessToken();
-            if (typeof t === "string") {
-              privyToken = t;
-              break;
-            }
-            await new Promise((r) => setTimeout(r, 300));
-          }
-
-          if (privyToken === null) {
-            throw new Error("Privy token unavailable");
-          }
-
-          const authRes = await fetch(
-            "https://predix-backend.onrender.com/auth/privy",
-            {
-              method: "POST",
-              headers: { Authorization: `Bearer ${privyToken}` },
-            }
-          );
-
-          const authJson: unknown = await authRes.json();
-
-          if (
-            !authRes.ok ||
-            typeof authJson !== "object" ||
-            authJson === null ||
-            typeof (authJson as { token?: unknown }).token !== "string"
-          ) {
-            throw new Error("Backend auth failed");
-          }
-
-          backendToken = (authJson as { token: string }).token;
-          localStorage.setItem("backend_token", backendToken);
-        }
-
-        if (typeof backendToken !== "string") {
-          throw new Error("Backend token missing");
-        }
-
-        const res = await fetch(
-          "https://predix-backend.onrender.com/portfolio/meta",
-          {
-            headers: { Authorization: `Bearer ${backendToken}` },
-          }
-        );
-
-        const json: unknown = await res.json();
-
-        if (
-          typeof json === "object" &&
-          json !== null &&
-          typeof (json as { balance?: unknown }).balance === "number"
-        ) {
-          if (!cancelled) setBalance((json as { balance: number }).balance);
-        }
-      } catch {
-        localStorage.removeItem("backend_token");
-        if (!cancelled) setBalance(0);
-      } finally {
-        if (!cancelled) setLoading(false);
+    let privyToken: string | null = null;
+    for (let i = 0; i < 10; i++) {
+      const t = await getAccessToken();
+      if (typeof t === "string") {
+        privyToken = t;
+        break;
       }
+      await new Promise((r) => setTimeout(r, 300));
     }
 
-    bootstrap();
-    return () => {
-      cancelled = true;
-    };
-  }, [ready, authenticated, getAccessToken]);
+    if (!privyToken) throw new Error("Privy token unavailable");
 
-  /* ---------- BUY / SELL ---------- */
-  async function submitTrade(type: "buy" | "sell") {
+    const res = await fetch(
+      "https://predix-backend.onrender.com/auth/privy",
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${privyToken}` },
+      }
+    );
+
+    const json = await res.json();
+    if (!res.ok || typeof json.token !== "string") {
+      throw new Error("Backend auth failed");
+    }
+
+    localStorage.setItem("backend_token", json.token);
+    return json.token;
+  }
+
+  async function refreshBalance() {
+    const token = await getBackendToken();
+    const res = await fetch(
+      "https://predix-backend.onrender.com/portfolio/meta",
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    const json = await res.json();
+    setBalance(Number(json.balance) || 0);
+  }
+
+  async function buy() {
     try {
-      setStatus("");
-
-      const backendToken = localStorage.getItem("backend_token");
-      if (typeof backendToken !== "string") {
-        throw new Error("Missing backend token");
-      }
-
-      const s = Number(shares);
-      const p = Number(price);
-
-      if (!marketId || s <= 0 || p <= 0) {
-        throw new Error("Invalid trade input");
-      }
+      setError(null);
+      const token = await getBackendToken();
 
       const res = await fetch(
-        `https://predix-backend.onrender.com/trade/${type}`,
+        "https://predix-backend.onrender.com/trade/buy",
         {
           method: "POST",
           headers: {
+            Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
-            Authorization: `Bearer ${backendToken}`,
             "Idempotency-Key": crypto.randomUUID(),
           },
           body: JSON.stringify({
             market_id: marketId,
             outcome,
-            shares: s,
-            price: p,
+            shares,
+            price,
           }),
         }
       );
 
       const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Trade failed");
 
-      if (!res.ok) {
-        throw new Error(json?.error ?? "Trade failed");
-      }
-
-      setStatus(type === "buy" ? "Trade filled" : "Trade sold");
-
-      // Refresh balance
-      const meta = await fetch(
-        "https://predix-backend.onrender.com/portfolio/meta",
-        { headers: { Authorization: `Bearer ${backendToken}` } }
-      );
-      const metaJson = await meta.json();
-      if (typeof metaJson.balance === "number") {
-        setBalance(metaJson.balance);
-      }
-    } catch (err) {
-      setStatus((err as Error).message);
+      await refreshBalance();
+    } catch (e: any) {
+      setError(e.message);
     }
   }
+
+  React.useEffect(() => {
+    if (!ready || !authenticated) return;
+    refreshBalance().finally(() => setLoading(false));
+  }, [ready, authenticated]);
 
   if (loading) return <p style={{ padding: 20 }}>Loading…</p>;
 
@@ -214,53 +155,41 @@ function PortfolioPage() {
         <strong>Balance:</strong> {balance.toFixed(2)}
       </div>
 
-      {/* BUY / SELL */}
-      <div
-        style={{
-          border: "1px solid #333",
-          borderRadius: 12,
-          padding: 16,
-          marginBottom: 20,
-        }}
-      >
+      <div style={{ border: "1px solid #333", padding: 16, borderRadius: 10 }}>
         <h3>Trade (Paper)</h3>
 
         <input
-          placeholder="Market ID"
           value={marketId}
           onChange={(e) => setMarketId(e.target.value)}
-          style={{ width: "100%", marginBottom: 8 }}
         />
+        <br />
 
-        <select
-          value={outcome}
-          onChange={(e) => setOutcome(e.target.value as "YES" | "NO")}
-          style={{ width: "100%", marginBottom: 8 }}
-        >
-          <option value="YES">YES</option>
-          <option value="NO">NO</option>
+        <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
+          <option>YES</option>
+          <option>NO</option>
         </select>
+        <br />
 
         <input
-          placeholder="Shares"
+          type="number"
           value={shares}
-          onChange={(e) => setShares(e.target.value)}
-          style={{ width: "100%", marginBottom: 8 }}
+          onChange={(e) => setShares(Number(e.target.value))}
         />
+        <br />
 
         <input
-          placeholder="Price"
+          type="number"
           value={price}
-          onChange={(e) => setPrice(e.target.value)}
-          style={{ width: "100%", marginBottom: 12 }}
+          onChange={(e) => setPrice(Number(e.target.value))}
         />
+        <br />
 
-        <button onClick={() => submitTrade("buy")}>Buy</button>{" "}
-        <button onClick={() => submitTrade("sell")}>Sell</button>
+        <button onClick={buy}>Buy</button>
 
-        {status && <p style={{ marginTop: 10 }}>{status}</p>}
+        {error && <p style={{ color: "red" }}>{error}</p>}
       </div>
 
+      <br />
       <button
         onClick={() => {
           localStorage.removeItem("backend_token");
@@ -274,7 +203,7 @@ function PortfolioPage() {
 }
 
 /* ===============================
-   🚀 App Root
+   App Root
 ================================ */
 function App() {
   return (
@@ -296,7 +225,7 @@ function App() {
 }
 
 /* ===============================
-   🔌 Mount
+   Mount
 ================================ */
 ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement
