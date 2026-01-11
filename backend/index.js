@@ -13,7 +13,15 @@ const STARTING_BALANCE = 1000;
 /* ===============================
    Middleware
 ================================ */
-app.use(cors());
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
+  })
+);
+
+app.options("*", cors());
 app.use(express.json());
 
 /* ===============================
