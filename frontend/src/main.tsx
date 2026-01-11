@@ -45,7 +45,7 @@ function LoginPage() {
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
-  const [balance, setBalance] = React.useState<number>(0);
+  const [balance, setBalance] = React.useState(0);
   const [positions, setPositions] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -53,8 +53,8 @@ function PortfolioPage() {
 
   const [marketId, setMarketId] = React.useState("test-market");
   const [outcome, setOutcome] = React.useState("YES");
-  const [shares, setShares] = React.useState<number>(10);
-  const [price, setPrice] = React.useState<number>(1);
+  const [shares, setShares] = React.useState(10);
+  const [price, setPrice] = React.useState(1);
 
   /* ===============================
      Backend Token
@@ -82,7 +82,7 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     Initial Load (ONLY PLACE WE REFRESH)
+     Load Portfolio (ONLY SOURCE OF BALANCE)
   ================================ */
   async function loadPortfolio() {
     const token = await getBackendToken();
@@ -100,12 +100,12 @@ function PortfolioPage() {
     const balJson = await balRes.json();
     const posJson = await posRes.json();
 
-    setBalance(Number(balJson.balance || 0));
+    setBalance(Number(balJson.balance ?? 0));
     setPositions(posJson.positions || []);
   }
 
   /* ===============================
-     BUY (NO RE-FETCH)
+     BUY (NO MATH, NO GUESSING)
   ================================ */
   async function buy() {
     try {
@@ -136,17 +136,10 @@ function PortfolioPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Trade failed");
 
-      // ✅ SINGLE SOURCE OF TRUTH
-      setBalance((b) => b - json.spent);
       setMessage(`Bought ${shares} @ ${price}`);
 
-      // Reload positions only
-      const posRes = await fetch(
-        "https://predix-backend.onrender.com/portfolio/positions",
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      const posJson = await posRes.json();
-      setPositions(posJson.positions || []);
+      // ✅ SINGLE REFRESH FROM BACKEND
+      await loadPortfolio();
     } catch (e: any) {
       setError(e.message);
     }
