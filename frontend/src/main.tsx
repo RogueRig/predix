@@ -40,40 +40,40 @@ function LoginPage() {
 }
 
 /* ===============================
+   Types
+================================ */
+type Position = {
+  market_id: string;
+  outcome: string;
+  total_shares: number;
+  avg_price: number;
+};
+
+/* ===============================
    Portfolio Page
 ================================ */
 function PortfolioPage() {
   const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
   const [balance, setBalance] = React.useState<number>(0);
-  const [positions, setPositions] = React.useState<
-    {
-      market_id: string;
-      outcome: string;
-      total_shares: number;
-      avg_price: number;
-    }[]
-  >([]);
-
+  const [positions, setPositions] = React.useState<Position[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<string | null>(null);
 
-  // Trade form
   const [marketId, setMarketId] = React.useState("test-market");
   const [outcome, setOutcome] = React.useState("YES");
   const [shares, setShares] = React.useState(10);
   const [price, setPrice] = React.useState(1);
 
   /* ===============================
-     Backend Token (SAFE)
+     Backend Token
   ================================ */
   async function getBackendToken(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
     if (typeof cached === "string") return cached;
 
     let privyToken: string | null = null;
-
     for (let i = 0; i < 10; i++) {
       const t = await getAccessToken();
       if (typeof t === "string") {
@@ -93,26 +93,20 @@ function PortfolioPage() {
       }
     );
 
-    const json: unknown = await res.json();
-
-    if (
-      !res.ok ||
-      typeof json !== "object" ||
-      json === null ||
-      typeof (json as { token?: unknown }).token !== "string"
-    ) {
+    const json = await res.json();
+    if (!res.ok || typeof json.token !== "string") {
       throw new Error("Backend auth failed");
     }
 
-    const token = (json as { token: string }).token;
-    localStorage.setItem("backend_token", token);
-    return token;
+    localStorage.setItem("backend_token", json.token);
+    return json.token;
   }
 
   /* ===============================
      Load Balance
   ================================ */
-  async function loadBalance(token: string) {
+  async function refreshBalance() {
+    const token = await getBackendToken();
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio/meta",
       {
@@ -124,9 +118,10 @@ function PortfolioPage() {
   }
 
   /* ===============================
-     Load Positions
+     Load Positions (FIXED)
   ================================ */
-  async function loadPositions(token: string) {
+  async function refreshPositions() {
+    const token = await getBackendToken();
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio/positions",
       {
@@ -135,12 +130,15 @@ function PortfolioPage() {
     );
 
     const json = await res.json();
-    setPositions(Array.isArray(json.positions) ? json.positions : []);
-  }
 
-  async function refreshAll() {
-    const token = await getBackendToken();
-    await Promise.all([loadBalance(token), loadPositions(token)]);
+    const parsed: Position[] = (json.positions || []).map((p: any) => ({
+      market_id: p.market_id,
+      outcome: p.outcome,
+      total_shares: Number(p.total_shares),
+      avg_price: Number(p.avg_price),
+    }));
+
+    setPositions(parsed);
   }
 
   /* ===============================
@@ -175,50 +173,8 @@ function PortfolioPage() {
       if (!res.ok) throw new Error(json.error || "Trade failed");
 
       setMessage(`Bought ${shares} @ ${price}`);
-      await refreshAll();
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }
-
-  /* ===============================
-     SELL
-  ================================ */
-  async function sell(
-    market_id: string,
-    outcome: string,
-    shares: number,
-    price: number
-  ) {
-    try {
-      setError(null);
-      setMessage(null);
-
-      const token = await getBackendToken();
-
-      const res = await fetch(
-        "https://predix-backend.onrender.com/trade/sell",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-            "Idempotency-Key": crypto.randomUUID(),
-          },
-          body: JSON.stringify({
-            market_id,
-            outcome,
-            shares,
-            price,
-          }),
-        }
-      );
-
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Sell failed");
-
-      setMessage(`Sold ${shares} @ ${price}`);
-      await refreshAll();
+      await refreshBalance();
+      await refreshPositions();
     } catch (e: any) {
       setError(e.message);
     }
@@ -226,7 +182,9 @@ function PortfolioPage() {
 
   React.useEffect(() => {
     if (!ready || !authenticated) return;
-    refreshAll().finally(() => setLoading(false));
+    Promise.all([refreshBalance(), refreshPositions()]).finally(() =>
+      setLoading(false)
+    );
   }, [ready, authenticated]);
 
   if (loading) return <p style={{ padding: 20 }}>Loading…</p>;
@@ -247,9 +205,9 @@ function PortfolioPage() {
         <strong>Balance:</strong> {balance.toFixed(2)}
       </div>
 
-      {/* ===== Positions ===== */}
-      <h3>Positions</h3>
-      {positions.length === 0 && <p>No open positions</p>}
+      <h2>Positions</h2>
+
+      {positions.length === 0 && <p>No positions</p>}
 
       {positions.map((p, i) => (
         <div
@@ -257,52 +215,39 @@ function PortfolioPage() {
           style={{
             border: "1px solid #333",
             padding: 12,
-            borderRadius: 8,
-            marginBottom: 10,
+            borderRadius: 10,
+            marginBottom: 12,
           }}
         >
-          <strong>{p.market_id}</strong> — {p.outcome}
-          <br />
-          Shares: {Number(p.total_shares).toFixed(2)}
-          <br />
-          Avg Price: {Number(p.avg_price).toFixed(2)}
-          <br />
-          <button
-            onClick={() =>
-              sell(p.market_id, p.outcome, p.total_shares, p.avg_price)
-            }
-          >
-            Sell All
-          </button>
+          <strong>
+            {p.market_id} — {p.outcome}
+          </strong>
+          <div>Shares: {p.total_shares}</div>
+          <div>Avg Price: {p.avg_price.toFixed(4)}</div>
         </div>
       ))}
 
-      {/* ===== Buy ===== */}
-      <h3>Buy (Paper)</h3>
+      <h2>Buy (Paper)</h2>
 
       <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
       <br />
-
       <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
         <option>YES</option>
         <option>NO</option>
       </select>
       <br />
-
       <input
         type="number"
         value={shares}
         onChange={(e) => setShares(Number(e.target.value))}
       />
       <br />
-
       <input
         type="number"
         value={price}
         onChange={(e) => setPrice(Number(e.target.value))}
       />
       <br />
-
       <button onClick={buy}>Buy</button>
 
       {message && <p style={{ color: "green" }}>{message}</p>}
