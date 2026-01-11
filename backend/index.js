@@ -241,3 +241,24 @@ app.get("/", (_, res) => {
 app.listen(PORT, () => {
   console.log("🚀 Backend running");
 });
+
+/* ===============================
+   DEV RESET (GET – MOBILE FRIENDLY)
+   TEMPORARY
+================================ */
+app.get("/dev/reset", requireBackendAuth, async (req, res) => {
+  await pool.query(
+    `DELETE FROM portfolios WHERE user_id = $1`,
+    [req.userId]
+  );
+
+  res.send(`
+    <html>
+      <body style="font-family: sans-serif; padding: 20px;">
+        <h2>✅ Portfolio Reset Successful</h2>
+        <p>Starting balance restored to ${STARTING_BALANCE}</p>
+        <p>You can now refresh the frontend.</p>
+      </body>
+    </html>
+  `);
+});
