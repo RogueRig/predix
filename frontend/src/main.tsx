@@ -101,7 +101,7 @@ function Portfolio() {
   }
 
   /* ===============================
-     Load Portfolio (SINGLE SOURCE)
+     Load Portfolio (SAFE NORMALIZATION)
   ================================ */
   async function loadPortfolio() {
     const token = await getBackendToken();
@@ -116,7 +116,14 @@ function Portfolio() {
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || "Failed to load portfolio");
 
-    setPortfolio(json);
+    // 🔑 CRITICAL FIX: normalize once
+    setPortfolio({
+      balance: Number(json.balance ?? 0),
+      realized_pnl: Number(json.realized_pnl ?? 0),
+      unrealized_pnl: Number(json.unrealized_pnl ?? 0),
+      positions: Array.isArray(json.positions) ? json.positions : [],
+      trades: Array.isArray(json.trades) ? json.trades : [],
+    });
   }
 
   React.useEffect(() => {
@@ -162,7 +169,7 @@ function Portfolio() {
           : `Sold ${shares} @ ${price}`
       );
 
-      await loadPortfolio(); // 🔑 ONLY update here
+      await loadPortfolio(); // single refresh source
     } catch (e: any) {
       setError(e.message);
     }
@@ -182,9 +189,11 @@ function Portfolio() {
     <div style={{ padding: 20 }}>
       <h2>Balance: {portfolio.balance.toFixed(2)}</h2>
       <div>Equity: {equity.toFixed(2)}</div>
+
       <div style={{ color: portfolio.realized_pnl >= 0 ? "green" : "red" }}>
         Realized PnL: {portfolio.realized_pnl.toFixed(2)}
       </div>
+
       <div style={{ color: portfolio.unrealized_pnl >= 0 ? "green" : "red" }}>
         Unrealized PnL: {portfolio.unrealized_pnl.toFixed(2)}
       </div>
