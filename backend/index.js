@@ -224,7 +224,7 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
     );
 
     await client.query("COMMIT");
-    res.json({ ok: true });
+    res.json({ ok: true, realized_pnl: realizedPnl });
   } catch (e) {
     await client.query("ROLLBACK");
     res.status(400).json({ error: e.message });
@@ -234,14 +234,20 @@ app.post("/trade", requireBackendAuth, async (req, res) => {
 });
 
 /* ===============================
-   Portfolio
+   PORTFOLIO (FIXED)
 ================================ */
 app.get("/portfolio", requireBackendAuth, async (req, res) => {
   const posRes = await pool.query(
+    `SELECT market_id, outcome, shares, avg_price FROM positions WHERE user_id = $1`,
+    [req.userId]
+  );
+
+  const tradeRes = await pool.query(
     `
-    SELECT market_id, outcome, shares, avg_price
-    FROM positions
+    SELECT market_id, outcome, side, shares, price, realized_pnl, created_at
+    FROM trades
     WHERE user_id = $1
+    ORDER BY created_at DESC
     `,
     [req.userId]
   );
@@ -282,25 +288,8 @@ app.get("/portfolio", requireBackendAuth, async (req, res) => {
     realized_pnl: realizedPnl,
     unrealized_pnl: unrealizedPnl,
     positions,
+    trades: tradeRes.rows,
   });
-});
-
-/* ===============================
-   Trades (FIXED)
-================================ */
-app.get("/trades", requireBackendAuth, async (req, res) => {
-  const { rows } = await pool.query(
-    `
-    SELECT market_id, outcome, side, shares, price, realized_pnl, created_at
-    FROM trades
-    WHERE user_id = $1
-    ORDER BY created_at DESC
-    LIMIT 100
-    `,
-    [req.userId]
-  );
-
-  res.json({ trades: rows });
 });
 
 /* ===============================
