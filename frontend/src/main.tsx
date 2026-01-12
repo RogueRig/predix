@@ -45,16 +45,19 @@ function Login() {
    Portfolio
 ================================ */
 function Portfolio() {
-  const { ready, authenticated, getAccessToken, logout } = usePrivy();
+  const { getAccessToken, logout } = usePrivy();
 
   const [loading, setLoading] = React.useState(true);
-  const [balance, setBalance] = React.useState(0);
-  const [realizedPnL, setRealizedPnL] = React.useState(0);
-  const [unrealizedPnL, setUnrealizedPnL] = React.useState(0);
-  const [positions, setPositions] = React.useState<any[]>([]);
-  const [trades, setTrades] = React.useState<any[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState<string | null>(null);
+
+  const [portfolio, setPortfolio] = React.useState<{
+    balance: number;
+    realized_pnl: number;
+    unrealized_pnl: number;
+    positions: any[];
+    trades: any[];
+  } | null>(null);
 
   const [marketId, setMarketId] = React.useState("test-market");
   const [outcome, setOutcome] = React.useState("YES");
@@ -62,15 +65,14 @@ function Portfolio() {
   const [price, setPrice] = React.useState(1);
 
   /* ===============================
-     Backend Token (STRICT + STABLE)
+     Backend Token (STRICT)
   ================================ */
   async function getBackendToken(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
     if (typeof cached === "string") return cached;
 
     let privyToken: string | null = null;
-
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 10; i++) {
       const t = await getAccessToken();
       if (typeof t === "string") {
         privyToken = t;
@@ -79,9 +81,7 @@ function Portfolio() {
       await new Promise((r) => setTimeout(r, 300));
     }
 
-    if (!privyToken) {
-      throw new Error("Privy token unavailable");
-    }
+    if (!privyToken) throw new Error("Privy token unavailable");
 
     const res = await fetch(
       "https://predix-backend.onrender.com/auth/privy",
@@ -114,40 +114,16 @@ function Portfolio() {
     );
 
     const json = await res.json();
-    if (!res.ok) {
-      throw new Error(json.error || "Failed to load portfolio");
-    }
+    if (!res.ok) throw new Error(json.error || "Failed to load portfolio");
 
-    setBalance(Number(json.balance ?? 0));
-    setRealizedPnL(Number(json.realized_pnl ?? 0));
-    setUnrealizedPnL(Number(json.unrealized_pnl ?? 0));
-    setPositions(json.positions ?? []);
-    setTrades(json.trades ?? []);
+    setPortfolio(json);
   }
 
-  /* ===============================
-     Initial Load (CRITICAL FIX)
-  ================================ */
   React.useEffect(() => {
-    if (!ready || !authenticated) return;
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        setLoading(true);
-        await loadPortfolio();
-      } catch (e: any) {
-        if (!cancelled) setError(e.message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [ready, authenticated]);
+    loadPortfolio()
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
 
   /* ===============================
      Trade
@@ -186,63 +162,63 @@ function Portfolio() {
           : `Sold ${shares} @ ${price}`
       );
 
-      await loadPortfolio();
+      await loadPortfolio(); // 🔑 ONLY update here
     } catch (e: any) {
       setError(e.message);
     }
   }
 
-  if (loading) {
-    return <p style={{ padding: 20 }}>Loading portfolio…</p>;
-  }
+  if (loading) return <p style={{ padding: 20 }}>Loading…</p>;
+  if (!portfolio) return <p style={{ padding: 20 }}>No data</p>;
+
+  const equity =
+    portfolio.balance +
+    portfolio.positions.reduce(
+      (s, p) => s + Number(p.position_value),
+      0
+    );
 
   return (
     <div style={{ padding: 20 }}>
-      <h2>Balance: {balance.toFixed(2)}</h2>
-      <div>Realized PnL: {realizedPnL.toFixed(2)}</div>
-      <div>Unrealized PnL: {unrealizedPnL.toFixed(2)}</div>
+      <h2>Balance: {portfolio.balance.toFixed(2)}</h2>
+      <div>Equity: {equity.toFixed(2)}</div>
+      <div style={{ color: portfolio.realized_pnl >= 0 ? "green" : "red" }}>
+        Realized PnL: {portfolio.realized_pnl.toFixed(2)}
+      </div>
+      <div style={{ color: portfolio.unrealized_pnl >= 0 ? "green" : "red" }}>
+        Unrealized PnL: {portfolio.unrealized_pnl.toFixed(2)}
+      </div>
 
       <h3>Positions</h3>
-      {positions.length === 0 && <p>No positions</p>}
-      {positions.map((p, i) => (
-        <div
-          key={i}
-          style={{ border: "1px solid #333", padding: 12, marginBottom: 8 }}
-        >
-          <strong>
-            {p.market_id} — {p.outcome}
-          </strong>
-          <div>Shares: {p.shares}</div>
-          <div>Avg Price: {p.avg_price.toFixed(4)}</div>
-          <div>Current Price: {p.current_price.toFixed(4)}</div>
-          <div>Position Value: {p.position_value.toFixed(2)}</div>
+      {portfolio.positions.length === 0 && <p>No positions</p>}
+      {portfolio.positions.map((p, i) => {
+        const pct =
+          (p.unrealized_pnl / (p.shares * p.avg_price)) * 100 || 0;
+
+        return (
           <div
+            key={i}
             style={{
-              color: p.unrealized_pnl >= 0 ? "lime" : "red",
+              border: "1px solid #333",
+              padding: 12,
+              marginBottom: 8,
             }}
           >
-            Unrealized PnL: {p.unrealized_pnl.toFixed(2)}
+            <strong>
+              {p.market_id} — {p.outcome}
+            </strong>
+            <div>Shares: {p.shares}</div>
+            <div>Avg Price: {p.avg_price.toFixed(4)}</div>
+            <div>Current Price: {p.current_price.toFixed(4)}</div>
+            <div>Value: {p.position_value.toFixed(2)}</div>
+            <div style={{ color: p.unrealized_pnl >= 0 ? "green" : "red" }}>
+              Unrealized PnL: {p.unrealized_pnl.toFixed(2)} ({pct.toFixed(2)}%)
+            </div>
           </div>
-        </div>
-      ))}
-
-      <h3>Trade History</h3>
-      {trades.length === 0 && <p>No trades</p>}
-      {trades.map((t, i) => (
-        <div
-          key={i}
-          style={{
-            padding: 8,
-            background: t.side === "buy" ? "#102010" : "#201010",
-            marginBottom: 6,
-          }}
-        >
-          {t.side.toUpperCase()} {t.shares} {t.market_id} @ {t.price}
-        </div>
-      ))}
+        );
+      })}
 
       <h3>Trade</h3>
-
       <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
       <br />
       <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
@@ -270,6 +246,50 @@ function Portfolio() {
 
       {message && <p style={{ color: "green" }}>{message}</p>}
       {error && <p style={{ color: "red" }}>{error}</p>}
+
+      <h3>Trade History</h3>
+      {portfolio.trades.length === 0 && <p>No trades</p>}
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th align="left">Time</th>
+            <th align="left">Side</th>
+            <th align="left">Market</th>
+            <th align="right">Shares</th>
+            <th align="right">Price</th>
+            <th align="right">PnL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {portfolio.trades.map((t, i) => (
+            <tr
+              key={i}
+              style={{
+                background:
+                  t.side === "buy"
+                    ? "rgba(0,255,0,0.08)"
+                    : "rgba(255,0,0,0.08)",
+              }}
+            >
+              <td>{new Date(t.created_at).toLocaleTimeString()}</td>
+              <td style={{ color: t.side === "buy" ? "green" : "red" }}>
+                {t.side.toUpperCase()}
+              </td>
+              <td>
+                {t.market_id} — {t.outcome}
+              </td>
+              <td align="right">{t.shares}</td>
+              <td align="right">{t.price.toFixed(2)}</td>
+              <td
+                align="right"
+                style={{ color: t.realized_pnl >= 0 ? "green" : "red" }}
+              >
+                {t.realized_pnl.toFixed(2)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       <br />
       <button
