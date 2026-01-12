@@ -26,7 +26,9 @@ function Login() {
   const navigate = useNavigate();
 
   React.useEffect(() => {
-    if (ready && authenticated) navigate("/portfolio", { replace: true });
+    if (ready && authenticated) {
+      navigate("/portfolio", { replace: true });
+    }
   }, [ready, authenticated, navigate]);
 
   if (!ready) return <p style={{ padding: 20 }}>Loading…</p>;
@@ -65,23 +67,33 @@ function Portfolio() {
     const cached = localStorage.getItem("backend_token");
     if (typeof cached === "string") return cached;
 
+    let privyToken: string | null = null;
     for (let i = 0; i < 10; i++) {
       const t = await getAccessToken();
       if (typeof t === "string") {
-        const res = await fetch(
-          "https://predix-backend.onrender.com/auth/privy",
-          {
-            method: "POST",
-            headers: { Authorization: `Bearer ${t}` },
-          }
-        );
-        const json = await res.json();
-        localStorage.setItem("backend_token", json.token);
-        return json.token;
+        privyToken = t;
+        break;
       }
       await new Promise((r) => setTimeout(r, 300));
     }
-    throw new Error("Privy token unavailable");
+
+    if (!privyToken) throw new Error("Privy token unavailable");
+
+    const res = await fetch(
+      "https://predix-backend.onrender.com/auth/privy",
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${privyToken}` },
+      }
+    );
+
+    const json = await res.json();
+    if (!res.ok || typeof json.token !== "string") {
+      throw new Error("Backend auth failed");
+    }
+
+    localStorage.setItem("backend_token", json.token);
+    return json.token;
   }
 
   /* ===============================
@@ -89,22 +101,42 @@ function Portfolio() {
   ================================ */
   async function refreshPortfolio() {
     const token = await getBackendToken();
+
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio",
       { headers: { Authorization: `Bearer ${token}` } }
     );
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error);
 
-    setBalance(Number(json.balance));
-    setRealizedPnL(Number(json.realized_pnl));
-    setUnrealizedPnL(Number(json.unrealized_pnl));
-    setPositions(json.positions || []);
-    setTrades(json.trades || []);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Failed to load portfolio");
+
+    setBalance(Number(json.balance ?? 0));
+    setRealizedPnL(Number(json.realized_pnl ?? 0));
+    setUnrealizedPnL(Number(json.unrealized_pnl ?? 0));
+    setPositions(json.positions ?? []);
+  }
+
+  /* ===============================
+     Load Trade History
+  ================================ */
+  async function refreshTrades() {
+    const token = await getBackendToken();
+
+    const res = await fetch(
+      "https://predix-backend.onrender.com/trades",
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Failed to load trades");
+
+    setTrades(json.trades ?? []);
   }
 
   React.useEffect(() => {
-    refreshPortfolio().catch((e) => setError(e.message));
+    Promise.all([refreshPortfolio(), refreshTrades()]).catch((e) =>
+      setError(e.message)
+    );
   }, []);
 
   /* ===============================
@@ -116,6 +148,7 @@ function Portfolio() {
       setMessage(null);
 
       const token = await getBackendToken();
+
       const res = await fetch(
         "https://predix-backend.onrender.com/trade",
         {
@@ -135,7 +168,7 @@ function Portfolio() {
       );
 
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error);
+      if (!res.ok) throw new Error(json.error || "Trade failed");
 
       setMessage(
         side === "buy"
@@ -144,25 +177,21 @@ function Portfolio() {
       );
 
       await refreshPortfolio();
+      await refreshTrades();
     } catch (e: any) {
       setError(e.message);
     }
   }
 
-  /* ===============================
-     Derived UI Metrics
-  ================================ */
-  const totalPositionValue = positions.reduce(
-    (s, p) => s + Number(p.position_value),
-    0
-  );
-  const equity = balance + totalPositionValue;
+  const equity =
+    balance +
+    positions.reduce((sum, p) => sum + Number(p.position_value ?? 0), 0);
 
   return (
     <div style={{ padding: 20 }}>
       <h2>Account</h2>
-      <div><strong>Balance:</strong> {balance.toFixed(2)}</div>
-      <div><strong>Equity:</strong> {equity.toFixed(2)}</div>
+      <div>Balance: {balance.toFixed(2)}</div>
+      <div>Equity: {equity.toFixed(2)}</div>
       <div style={{ color: realizedPnL >= 0 ? "green" : "red" }}>
         Realized PnL: {realizedPnL.toFixed(2)}
       </div>
@@ -175,20 +204,19 @@ function Portfolio() {
       {positions.map((p, i) => {
         const pct =
           p.avg_price > 0
-            ? ((p.current_price - p.avg_price) / p.avg_price) * 100
+            ? (p.unrealized_pnl / (p.avg_price * p.shares)) * 100
             : 0;
 
         return (
-          <div
-            key={i}
-            style={{ border: "1px solid #333", padding: 12, marginBottom: 8 }}
-          >
-            <strong>{p.market_id} — {p.outcome}</strong>
+          <div key={i} style={{ border: "1px solid #333", padding: 12 }}>
+            <strong>
+              {p.market_id} — {p.outcome}
+            </strong>
             <div>Shares: {p.shares}</div>
             <div>Avg Price: {p.avg_price.toFixed(4)}</div>
             <div>Current Price: {p.current_price.toFixed(4)}</div>
             <div>Value: {p.position_value.toFixed(2)}</div>
-            <div style={{ color: pct >= 0 ? "green" : "red" }}>
+            <div style={{ color: p.unrealized_pnl >= 0 ? "green" : "red" }}>
               PnL: {p.unrealized_pnl.toFixed(2)} ({pct.toFixed(2)}%)
             </div>
           </div>
@@ -196,38 +224,23 @@ function Portfolio() {
       })}
 
       <h3>Trade History</h3>
-      <table width="100%" style={{ borderCollapse: "collapse" }}>
-        <thead>
-          <tr>
-            <th>Side</th>
-            <th>Market</th>
-            <th>Outcome</th>
-            <th>Shares</th>
-            <th>Price</th>
-            <th>PnL</th>
-          </tr>
-        </thead>
-        <tbody>
-          {trades.map((t, i) => (
-            <tr
-              key={i}
-              style={{
-                background: t.side === "buy" ? "#0a2" : "#400",
-                color: "#fff",
-              }}
-            >
-              <td>{t.side.toUpperCase()}</td>
-              <td>{t.market_id}</td>
-              <td>{t.outcome}</td>
-              <td>{t.shares}</td>
-              <td>{t.price}</td>
-              <td>{Number(t.realized_pnl).toFixed(2)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {trades.length === 0 && <p>No trades</p>}
+      {trades.map((t, i) => (
+        <div
+          key={i}
+          style={{
+            borderLeft: `4px solid ${t.side === "buy" ? "green" : "red"}`,
+            paddingLeft: 8,
+            marginBottom: 6,
+          }}
+        >
+          {t.side.toUpperCase()} — {t.market_id} {t.outcome} —{" "}
+          {t.shares} @ {t.price}
+        </div>
+      ))}
 
       <h3>Trade</h3>
+
       <input value={marketId} onChange={(e) => setMarketId(e.target.value)} />
       <br />
       <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
@@ -235,9 +248,17 @@ function Portfolio() {
         <option value="NO">NO</option>
       </select>
       <br />
-      <input type="number" value={shares} onChange={(e) => setShares(+e.target.value)} />
+      <input
+        type="number"
+        value={shares}
+        onChange={(e) => setShares(Number(e.target.value))}
+      />
       <br />
-      <input type="number" value={price} onChange={(e) => setPrice(+e.target.value)} />
+      <input
+        type="number"
+        value={price}
+        onChange={(e) => setPrice(Number(e.target.value))}
+      />
       <br />
 
       <button onClick={() => trade("buy")}>Buy</button>
