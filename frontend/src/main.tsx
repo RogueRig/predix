@@ -45,8 +45,9 @@ function Login() {
    Portfolio
 ================================ */
 function Portfolio() {
-  const { getAccessToken, logout } = usePrivy();
+  const { ready, authenticated, getAccessToken, logout } = usePrivy();
 
+  const [loading, setLoading] = React.useState(true);
   const [balance, setBalance] = React.useState(0);
   const [realizedPnL, setRealizedPnL] = React.useState(0);
   const [unrealizedPnL, setUnrealizedPnL] = React.useState(0);
@@ -61,14 +62,15 @@ function Portfolio() {
   const [price, setPrice] = React.useState(1);
 
   /* ===============================
-     Backend Token (STRICT)
+     Backend Token (STRICT + STABLE)
   ================================ */
   async function getBackendToken(): Promise<string> {
     const cached = localStorage.getItem("backend_token");
     if (typeof cached === "string") return cached;
 
     let privyToken: string | null = null;
-    for (let i = 0; i < 10; i++) {
+
+    for (let i = 0; i < 15; i++) {
       const t = await getAccessToken();
       if (typeof t === "string") {
         privyToken = t;
@@ -77,7 +79,9 @@ function Portfolio() {
       await new Promise((r) => setTimeout(r, 300));
     }
 
-    if (!privyToken) throw new Error("Privy token unavailable");
+    if (!privyToken) {
+      throw new Error("Privy token unavailable");
+    }
 
     const res = await fetch(
       "https://predix-backend.onrender.com/auth/privy",
@@ -97,47 +101,53 @@ function Portfolio() {
   }
 
   /* ===============================
-     Load Portfolio
+     Load Portfolio (SINGLE SOURCE)
   ================================ */
-  async function refreshPortfolio() {
+  async function loadPortfolio() {
     const token = await getBackendToken();
 
     const res = await fetch(
       "https://predix-backend.onrender.com/portfolio",
-      { headers: { Authorization: `Bearer ${token}` } }
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
     );
 
     const json = await res.json();
-    if (!res.ok) throw new Error(json.error || "Failed to load portfolio");
+    if (!res.ok) {
+      throw new Error(json.error || "Failed to load portfolio");
+    }
 
     setBalance(Number(json.balance ?? 0));
     setRealizedPnL(Number(json.realized_pnl ?? 0));
     setUnrealizedPnL(Number(json.unrealized_pnl ?? 0));
     setPositions(json.positions ?? []);
-  }
-
-  /* ===============================
-     Load Trade History
-  ================================ */
-  async function refreshTrades() {
-    const token = await getBackendToken();
-
-    const res = await fetch(
-      "https://predix-backend.onrender.com/trades",
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || "Failed to load trades");
-
     setTrades(json.trades ?? []);
   }
 
+  /* ===============================
+     Initial Load (CRITICAL FIX)
+  ================================ */
   React.useEffect(() => {
-    Promise.all([refreshPortfolio(), refreshTrades()]).catch((e) =>
-      setError(e.message)
-    );
-  }, []);
+    if (!ready || !authenticated) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setLoading(true);
+        await loadPortfolio();
+      } catch (e: any) {
+        if (!cancelled) setError(e.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, authenticated]);
 
   /* ===============================
      Trade
@@ -176,52 +186,45 @@ function Portfolio() {
           : `Sold ${shares} @ ${price}`
       );
 
-      await refreshPortfolio();
-      await refreshTrades();
+      await loadPortfolio();
     } catch (e: any) {
       setError(e.message);
     }
   }
 
-  const equity =
-    balance +
-    positions.reduce((sum, p) => sum + Number(p.position_value ?? 0), 0);
+  if (loading) {
+    return <p style={{ padding: 20 }}>Loading portfolio…</p>;
+  }
 
   return (
     <div style={{ padding: 20 }}>
-      <h2>Account</h2>
-      <div>Balance: {balance.toFixed(2)}</div>
-      <div>Equity: {equity.toFixed(2)}</div>
-      <div style={{ color: realizedPnL >= 0 ? "green" : "red" }}>
-        Realized PnL: {realizedPnL.toFixed(2)}
-      </div>
-      <div style={{ color: unrealizedPnL >= 0 ? "green" : "red" }}>
-        Unrealized PnL: {unrealizedPnL.toFixed(2)}
-      </div>
+      <h2>Balance: {balance.toFixed(2)}</h2>
+      <div>Realized PnL: {realizedPnL.toFixed(2)}</div>
+      <div>Unrealized PnL: {unrealizedPnL.toFixed(2)}</div>
 
       <h3>Positions</h3>
       {positions.length === 0 && <p>No positions</p>}
-      {positions.map((p, i) => {
-        const pct =
-          p.avg_price > 0
-            ? (p.unrealized_pnl / (p.avg_price * p.shares)) * 100
-            : 0;
-
-        return (
-          <div key={i} style={{ border: "1px solid #333", padding: 12 }}>
-            <strong>
-              {p.market_id} — {p.outcome}
-            </strong>
-            <div>Shares: {p.shares}</div>
-            <div>Avg Price: {p.avg_price.toFixed(4)}</div>
-            <div>Current Price: {p.current_price.toFixed(4)}</div>
-            <div>Value: {p.position_value.toFixed(2)}</div>
-            <div style={{ color: p.unrealized_pnl >= 0 ? "green" : "red" }}>
-              PnL: {p.unrealized_pnl.toFixed(2)} ({pct.toFixed(2)}%)
-            </div>
+      {positions.map((p, i) => (
+        <div
+          key={i}
+          style={{ border: "1px solid #333", padding: 12, marginBottom: 8 }}
+        >
+          <strong>
+            {p.market_id} — {p.outcome}
+          </strong>
+          <div>Shares: {p.shares}</div>
+          <div>Avg Price: {p.avg_price.toFixed(4)}</div>
+          <div>Current Price: {p.current_price.toFixed(4)}</div>
+          <div>Position Value: {p.position_value.toFixed(2)}</div>
+          <div
+            style={{
+              color: p.unrealized_pnl >= 0 ? "lime" : "red",
+            }}
+          >
+            Unrealized PnL: {p.unrealized_pnl.toFixed(2)}
           </div>
-        );
-      })}
+        </div>
+      ))}
 
       <h3>Trade History</h3>
       {trades.length === 0 && <p>No trades</p>}
@@ -229,13 +232,12 @@ function Portfolio() {
         <div
           key={i}
           style={{
-            borderLeft: `4px solid ${t.side === "buy" ? "green" : "red"}`,
-            paddingLeft: 8,
+            padding: 8,
+            background: t.side === "buy" ? "#102010" : "#201010",
             marginBottom: 6,
           }}
         >
-          {t.side.toUpperCase()} — {t.market_id} {t.outcome} —{" "}
-          {t.shares} @ {t.price}
+          {t.side.toUpperCase()} {t.shares} {t.market_id} @ {t.price}
         </div>
       ))}
 
